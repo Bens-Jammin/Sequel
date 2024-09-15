@@ -1,4 +1,13 @@
-use crate::structures::{column::{parse_str, DataType}, modify_where::FilterCondition, sort_method::SortCondition};
+use std::collections::HashMap;
+
+use crate::structures::{
+    self, 
+    column::{parse_into_field_value, parse_str, Column, DataType, FieldValue}, 
+    db_err::DBError,
+    sort_method::SortCondition, 
+    table::Table
+};
+
 
 #[derive(Debug)]
 pub enum Query {
@@ -14,8 +23,8 @@ pub enum Query {
     /// REMOVE FROM (table) WHERE (condition)
     // FIXME: DELETE(String, FilterCondition),
 
-    /// SORT (table) ON (sort_condition) 
-    SORT(String, SortCondition),
+    /// SORT (table) ON (sort_condition) COLUMN (column)
+    SORT(String, SortCondition, String),
 
     /// FILTER (table) ON (filter_condition)
     // FIXME: FILTER(String, FilterCondition),
@@ -24,7 +33,8 @@ pub enum Query {
     INDEX(String, String),
 
     // CREATE (table_name) COLUMNS (col_name1:data_type1, etc) KEYS (col_name_1, etc)
-    CREATE(String, Vec<String>, Vec<DataType>, Vec<String>)
+    CREATE(String, Vec<String>, Vec<DataType>, Vec<String>),
+
 }
 
 
@@ -37,7 +47,7 @@ pub enum Query {
 /// INSERT `(val1, val2, ..., valn)` INTO `(table)` `(col1, col2, ..., coln)` <br>
 /// EDIT `(val1, val2, ..., valn)` INTO `(table)` `(col1, col2, ..., coln)` <br>
 /// REMOVE FROM `(table)` WHERE `(condition)` <br>
-/// SORT `(table)` ON `(sort_condition)` <br>
+/// SORT `(table)` ON `(sort_condition)` COLUMN (column) <br>
 /// FILTER `(table)` ON `(filter_condition)` <br>
 /// INDEX `(table)` `(column)`
 pub fn parse_query(command: String) -> Option<Query> {
@@ -53,34 +63,34 @@ pub fn parse_query(command: String) -> Option<Query> {
 
     /// helper function to split the command into its parts, while keeping lists intact 
     fn split_outside_parentheses(s: &str) -> Vec<&str> {
-    let mut result = Vec::new();
-    let mut start = 0;
-    let mut inside_parentheses = false;
+        let mut result = Vec::new();
+        let mut start = 0;
+        let mut inside_parentheses = false;
 
-    let bytes = s.as_bytes(); // Work with bytes to track positions
+        let bytes = s.as_bytes(); // Work with bytes to track positions
 
-    for (i, &c) in bytes.iter().enumerate() {
-        match c {
-            b'(' => inside_parentheses = true,
-            b')' => inside_parentheses = false,
-            b' ' => {
-                if !inside_parentheses {
-                    if start != i { // Check if we have a non-empty word
-                        result.push(&s[start..i]);
+        for (i, &c) in bytes.iter().enumerate() {
+            match c {
+                b'(' => inside_parentheses = true,
+                b')' => inside_parentheses = false,
+                b' ' => {
+                    if !inside_parentheses {
+                        if start != i { // Check if we have a non-empty word
+                            result.push(&s[start..i]);
+                        }
+                        start = i + 1; // Update start to be after the space
                     }
-                    start = i + 1; // Update start to be after the space
                 }
+                _ => {} // Do nothing for other characters
             }
-            _ => {} // Do nothing for other characters
         }
-    }
 
-    // Add the last word if there's any remaining after the last space
-    if start < s.len() {
-        result.push(&s[start..]);
-    }
+        // Add the last word if there's any remaining after the last space
+        if start < s.len() {
+            result.push(&s[start..]);
+        }
 
-    result
+        result
     }
 
     // Trim the command and split it by whitespace
@@ -136,13 +146,14 @@ pub fn parse_query(command: String) -> Option<Query> {
         if let Some(on_index) = parts.iter().position(|&s| s.to_lowercase() == "on") {
             let table = parts[1].trim_matches(|c| c == '(' || c == ')').to_string();
             let sort_condition = SortCondition::parse_str( parts[on_index + 1] );
-            println!("{:?}", sort_condition);
-            match sort_condition {
-                None => return None,
-                Some(_) => (),
-            } 
+            
+            if sort_condition.is_none() { return None }
 
-            return Some(Query::SORT(table, sort_condition.unwrap()));
+            if let Some(column_index) = parts.iter().position(|&s| s.to_lowercase() == "column") {
+                let column = parts[column_index + 1].trim_matches(|c| c == '(' || c == ')').to_string();
+                
+                return Some(Query::SORT(table, sort_condition.unwrap(), column));
+            } else { return None }   
         }
     } else if main_query_command.starts_with("filter") {
         // FILTER (table) ON (filter_condition)
@@ -199,147 +210,63 @@ pub fn parse_query(command: String) -> Option<Query> {
     None
 }
 
-pub fn test_parse_query() {
-    let mut passed_tests = 0;
-    let mut total_tests = 0;
-    let mut error_messages: Vec<String> = Vec::new();
 
-    // === PASSED TESTS ===
 
-    // Test 1: Valid SELECT query
-    total_tests += 1;
-    let select_query = "SELECT (name, age) FROM (people)".to_string();
-    match parse_query(select_query) {
-        Some(Query::SELECT(cols, table)) => {
-            if cols == vec!["name".to_string(), "age".to_string()] && table == "people".to_string() {
-                passed_tests += 1;
-            } else {
-                error_messages.push(format!(
-                    "Test 1 Failed: Incorrect parsing result: cols={:?}, table={}",
-                    cols, table
-                ));
+pub fn execute_query(query: Query) -> Result<Table, DBError>{
+
+
+    match query {
+        Query::SELECT(col_names, table) => {
+            let file_path = format!("db_{table}.bin");
+            let db = structures::table::load_database(&file_path)?;
+
+            let r = db.get_select_columns(&col_names)?;
+
+            return Ok(r)
+        },
+        Query::INSERT(new_vals, table, col_names) => {
+            let file_path = format!("db_{table}.bin");
+            let mut db = structures::table::load_database(&file_path)?;
+            
+            let mut row: HashMap<String, FieldValue> = HashMap::new();
+
+            for (col_name, new_val) in col_names.iter().zip(new_vals) {
+                let datatype = parse_into_field_value(&new_val);
+                row.insert(col_name.to_owned(), datatype);
+            } 
+
+            db.insert_row(row)?;
+            db.save()?;
+
+            return Ok(db)
+        },
+        Query::EDIT(new_vals, table, col_names) => {
+            let file_path = format!("db_{table}.bin");
+            let db = structures::table::load_database(&file_path)?;
+
+            // let r = db.edit_rows_where()
+
+            // db.save();
+        },
+        Query::SORT(table, condition, column) => {
+            let file_path = format!("db_{table}.bin");
+            let mut db = structures::table::load_database(&file_path)?;
+            
+            db.sort_rows(condition, column)?;
+
+            return Ok(db)
+        },
+        Query::INDEX(_, _) => todo!(),
+        Query::CREATE(table, col_names, datatypes, keys) => {
+            let mut columns: Vec<Column> = Vec::new();
+            for (col, datatype) in col_names.iter().zip(datatypes.iter()) {
+                let column_is_key = keys.contains(col);
+                columns.push(Column::new(col.clone(), datatype.clone(), column_is_key));
             }
-        }
-        _ => error_messages.push("Test 1 Failed: Query parsing failed or returned incorrect variant.".to_string()),
+            let db = Table::new(table, columns);
+            let _ = db.save();
+        },
     }
 
-    // Test 2: Valid INSERT query
-    total_tests += 1;
-    let insert_query = "INSERT (John, 30) INTO (friends) (name, age)".to_string();
-    match parse_query(insert_query) {
-        Some(Query::INSERT(vals, table, cols)) => {
-            if vals == vec!["John".to_string(), "30".to_string()] && table == "friends".to_string() && cols == vec!["name".to_string(), "age".to_string()] {
-                passed_tests += 1;
-            } else {
-                error_messages.push(format!(
-                    "Test 2 Failed: Incorrect parsing result: vals={:?}, table={}, cols={:?}",
-                    vals, table, cols
-                ));
-            }
-        }
-        _ => error_messages.push("Test 2 Failed: Query parsing failed or returned incorrect variant.".to_string()),
-    }
-
-    // Test 3: Valid DELETE query
-    // total_tests += 1;
-    // let delete_query = "REMOVE FROM (users) WHERE (age = 20)".to_string();
-    // match parse_query(delete_query.clone()) {
-    //     Some(Query::DELETE(table, _)) => {
-    //         if table == "users".to_string() {
-    //             passed_tests += 1;
-    //         } else {
-    //             error_messages.push(format!(
-    //                 "Test 3 (remove) Failed: Incorrect parsing result: table={}",
-    //                 table
-    //             ));
-    //         }
-    //     }
-    //     _ => error_messages.push(format!(
-    //         "Test 3 Failed: Query parsing failed or returned incorrect variant: {:?}",
-    //         parse_query(delete_query)
-    //     )),
-    // }
-
-    // Test 4: Valid SORT query
-    total_tests += 1;
-    let sort_query = "SORT (people) ON (numeric_ascending)".to_string();
-    match parse_query(sort_query.clone()) {
-        Some(Query::SORT(table, _)) => {
-            if table == "people".to_string() {
-                passed_tests += 1;
-            } else {
-                error_messages.push(format!(
-                    "Test 4 (sort) Failed: Incorrect parsing result: table={}",
-                    table
-                ));
-            }
-        }
-        _ => error_messages.push(format!(
-            "Test 4 Failed: Query parsing failed or returned incorrect variant: {:?}",
-            parse_query(sort_query)
-        )),
-    }
-
-     // Test 5: Valid FILTER query
-    // total_tests += 1;
-    // let sort_query = "FILTER (people) ON (date_descending)".to_string();
-    // match parse_query(sort_query.clone()) {
-    //     Some(Query::FILTER(table, _)) => {
-    //         if table == "people".to_string() {
-    //             passed_tests += 1;
-    //         } else {
-    //             error_messages.push(format!(
-    //                 "Test 5 (filter) Failed: Incorrect parsing result: table={}",
-    //                 table
-    //             ));
-    //         }
-    //     }
-    //     _ => error_messages.push(format!(
-    //         "Test 5 Failed: Query parsing failed or returned incorrect variant: {:?}",
-    //         parse_query(sort_query)
-    //     )),
-    // }
-
-    // test 6: CREATE query
-    total_tests += 1;
-    let create_query = "CREATE (users) COLUMNS (id:Number, name:String, age:Number) KEYS (id)".to_string();
-    match parse_query(create_query.clone()) {
-        Some(Query::CREATE(table, columns, data_types, keys)) => {
-            if table == "users" && columns == vec!["id".to_string(), "name".to_string(), "age".to_string()] && keys == vec!["id".to_string()] {
-                // Assume FieldValue has a reasonable debug format for comparison
-                let expected_values = vec![DataType::Number, DataType::String, DataType::Number];
-                if data_types == expected_values {
-                    passed_tests += 1;
-                } else {
-                    error_messages.push(format!(
-                        "Test 6 (create) Failed: Incorrect field values: {:?}",
-                        data_types
-                    ));
-                }
-            } else {
-                error_messages.push(format!(
-                    "Test 6 (create) Failed: Incorrect parsing result: table={}, columns={:?}, keys={:?}",
-                    table, columns, keys
-                ));
-            }
-        }
-        _ => error_messages.push(format!(
-            "Test 6 Failed: Query parsing failed or returned incorrect variant: {:?}",
-            parse_query(create_query)
-        )),
-    }
-
-    // Test 7: Invalid query
-    total_tests += 1;
-    let invalid_query = "INVALID QUERY".to_string();
-    match parse_query(invalid_query) {
-        None => passed_tests += 1, // Expect None for invalid query
-        _ => error_messages.push("Test 7 Failed: Invalid query should have returned None.".to_string()),
-    }
-
-    // === RESULTS ===
-    println!(" == PARSE QUERY TESTS == ");
-    println!("Tests done: {}", total_tests);
-    println!("Passed tests: {}", passed_tests);
-    println!("Error messages: \n{:#?}", error_messages);
+    Err( DBError::ActionNotImplemented("execute_query".to_owned()) )
 }

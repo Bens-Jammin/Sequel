@@ -75,7 +75,7 @@ pub fn parse_str(str: &str) -> DataType {
 ///
 /// ## Usage
 /// used for parsing a users input into a datatype
-pub fn parse_into_datatype(value: &String) -> FieldValue {
+pub fn parse_into_field_value(value: &String) -> FieldValue {
     // 1. Try parsing as Boolean
     let lower_value = value.to_lowercase();
     if lower_value == "true" {

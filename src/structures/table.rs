@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::HashMap, error::Error, fs::{File, OpenOptions}, io::{Read, Write}};
+use std::{cmp::Ordering, collections::HashMap, fs::{File, OpenOptions}, io::{Read, Write}};
 use serde::{Deserialize, Serialize};
 use bincode;
 
@@ -227,10 +227,6 @@ impl Table {
     }
 }
 
-// TODO: 
-// 1. index_columns()
-// 2. edit_rows_where()
-
 
 
 // |=======================================|
@@ -436,76 +432,82 @@ impl Table {
 // |===========================|
 // |     display functions     |
 // |===========================|
-
 impl Table {
-    pub fn show(&self) {
-        // Determine the maximum width of each column for proper formatting
-        let mut column_widths: HashMap<String, usize> = HashMap::new();
-
-        for column in &self.columns {
-            let name = column.get_name().to_string();
-            let width = name.len() + 20; // Adding some padding for data type display
-            column_widths.insert(name.clone(), width);
-        }
-
-        // Print the header row with column names and data types
-        let mut header_row = String::new();
-        let mut type_row = String::new();
+    pub fn to_ascii(&self) -> String {
+        // Header for the table
+        let mut result = String::new();
+        let column_names = self.all_column_names();
         
-        for column in &self.columns {
-            let name = column.get_name();
-
-            let width = column_widths.get(name).unwrap();
-            header_row.push_str(&format!("{:<width$}", name, width = width));
-            type_row.push_str(&format!("{:<width$}", format!("[{}]", column.get_data_type()), width = width));
-        }
+        // Calculate the width of each column for formatting purposes
+        let mut column_widths: Vec<usize> = column_names.iter()
+            .map(|name| name.len())
+            .collect();
         
-        println!("{}", header_row);
-        println!("{}", type_row);
-        println!("{}", "-".repeat(header_row.len())); // Separator line
-
-        // Print each row
+        // Update column widths based on the content in rows
         for row in &self.rows {
-            let mut row_str = String::new();
-            for column in &self.columns {
-                let name = column.get_name();
-                let width = column_widths.get(name).unwrap();
-                let value = match row.get(name) {
-                    Some(field_value) => match field_value {
-                         FieldValue::String(s)  => s.to_string(),
-                         FieldValue::Number(n)  => n.to_string(),
-                         FieldValue::Date(d)    => d.to_string(),
-                         FieldValue::Url(u)     => u.to_string(),
-                         FieldValue::Boolean(b) => b.to_string(),
-                        &FieldValue::Null => String::from("Null"),
-                    },
-                    None => String::new(),
-                };
-                row_str.push_str(&format!("{:<width$}", value, width = width));
+            for (i, col_name) in column_names.iter().enumerate() {
+                if let Some(value) = row.get(col_name) {
+                    let value_str = value.to_string();
+                    if value_str.len() > column_widths[i] {
+                        column_widths[i] = value_str.len();
+                    }
+                }
             }
-            println!("{}", row_str);
         }
+        
+        // Add the column names to the result with padding
+        for (i, col_name) in column_names.iter().enumerate() {
+            result.push_str(&format!("| {:width$} ", col_name, width = column_widths[i]));
+        }
+        result.push_str("|\n");
+        
+        // Add a separator between the column names and data
+        for width in &column_widths {
+            result.push_str(&format!("|{:-<width$}", "", width = *width + 2));
+        }
+        result.push_str("|\n");
+        
+        // Add the rows to the result
+        for row in &self.rows {
+            for (i, col_name) in column_names.iter().enumerate() {
+                let value = row.get(col_name).map_or("".to_string(), |v| v.to_string());
+                result.push_str(&format!("| {:width$} ", value, width = column_widths[i]));
+            }
+            result.push_str("|\n");
+        }
+        
+        result
     }
 }
 
+
 impl Table {
-    pub fn save(&self, file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn save(&self) -> Result<(), DBError> {
 
-        let encoded_data = bincode::serialize(&self)?;
+        let file_path = format!("db_{}.bin", self.name);
 
+        let encoded_data = bincode::serialize(&self);
+        if encoded_data.is_err(     ) { return Err(DBError::DataBaseFileFailure(file_path.to_owned())) }
+        let encoded_data = encoded_data.unwrap();
 
-        let mut file = OpenOptions::new()
+        let file = OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
-            .open(file_path)?;
+            .open(&file_path);
 
-        file.write_all(&encoded_data)?;
+        if file.is_err() { return Err(DBError::DataBaseFileFailure(file_path.to_owned())) }
+        let mut file = file.unwrap();
+
+        let r = file.write_all(&encoded_data);
+        if r.is_err() { return Err(DBError::DataBaseFileFailure(file_path)) }
         
         Ok(())
     } 
 }
-    
+
+
+
     
 /// loads a database given a filepath. File must be a binary file (extension .bin)
 /// 
@@ -521,14 +523,23 @@ impl Table {
 /// - dbEmployees.bin
 /// - wages_2024.bin
 /// - db_election_results.csv
-pub fn load_database(file_path: &str) -> Result<Table, Box<dyn Error>> {
+pub fn load_database(file_path: &str) -> Result<Table, DBError> {
 
-    let mut file = File::open(file_path)?;
+    let file = File::open(file_path);
+    if file.is_err() { return Err(DBError::DataBaseFileFailure(file_path.to_owned()))}
+    let mut file = file.unwrap();
+
     let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer)?;
+    let r = file.read_to_end(&mut buffer);
+    if r.is_err() { return Err(DBError::DataBaseFileFailure(file_path.to_owned())) }
 
-    let decoded_data = bincode::deserialize(&buffer)?;
 
-    Ok(decoded_data)
+    let decoded_data = bincode::deserialize(&buffer);
+
+    if decoded_data.is_err() { 
+        return Err(DBError::DataBaseFileFailure(file_path.to_owned()))
+    } else {
+        Ok(decoded_data.unwrap())
+    }
 
 }

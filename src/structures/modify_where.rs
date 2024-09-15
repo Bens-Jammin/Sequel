@@ -31,7 +31,7 @@ pub enum FilterCondition {
 
 impl FilterCondition {
     pub fn parse_str(input: &str) -> Option<FilterCondition> {
-        let r = match input.trim().to_lowercase().as_str() {
+        match input.trim().to_lowercase().as_str() {
             "<" => Some(FilterCondition::LessThan),
             "<=" => Some(FilterCondition::LessThanOrEqualTo),
             ">" => Some(FilterCondition::GreaterThan),
@@ -41,11 +41,10 @@ impl FilterCondition {
             "like" => Some(FilterCondition::Like),
             "true" => Some(FilterCondition::True),
             "false" => Some(FilterCondition::False),
+            "not like" => None, 
+            "between" => None,
             _ => None,
-            // TODO: add notlike, numberbetween, datebetween
-        };
-        println!("str = '{}', r = '{:?}'", input, &r);
-        r
+        }
     }
 }
 

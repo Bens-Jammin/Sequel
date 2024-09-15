@@ -5,7 +5,6 @@ use super::{column::DataType, modify_where::FilterCondition};
 
 
 
-// TODO: change this to something more generic, maybe DatabaseError or something like that?
 #[derive(Debug)]
 pub enum DBError {
 
@@ -20,11 +19,17 @@ pub enum DBError {
 
     MissingModifyCriteria(FilterCondition),
 
-    // primary key column name
+    /// primary key column name
     DuplicatePrimaryKey(String),
 
-    // thrown if a user tries to delete a primary key column
-    MandatoryColumn(String)
+    /// thrown if a user tries to delete a primary key column
+    MandatoryColumn(String),
+
+    /// thrown when there is an i/o error involving the relation 
+    DataBaseFileFailure(String),
+
+    /// thrown when a function hasn't been implemented yet
+    ActionNotImplemented(String),
 }
 
 
@@ -47,7 +52,11 @@ impl fmt::Display for DBError {
             DBError::DuplicatePrimaryKey(pk_col_name) 
                 => write!(f, "primary key value already exists in the column '{}'", pk_col_name),
             DBError::MandatoryColumn(col_name) 
-                => write!(f, "The column '{}' is a requirement for this or other tables.", col_name)
+                => write!(f, "The column '{}' is a requirement for this or other tables.", col_name),
+            DBError::DataBaseFileFailure(file_path)
+                => write!(f, "There was an error involving the database path '{}'", file_path),
+            DBError::ActionNotImplemented(func_name)
+                => write!(f, "the logic for the function '{func_name}' has not been implemented yet!")
         }
     }
 }
