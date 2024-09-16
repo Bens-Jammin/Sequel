@@ -1,11 +1,7 @@
 use std::collections::HashMap;
 
 use crate::structures::{
-    self, 
-    column::{parse_into_field_value, parse_str, Column, DataType, FieldValue}, 
-    db_err::DBError,
-    sort_method::SortCondition, 
-    table::Table
+    self, column::{parse_into_field_value, parse_str, Column, DataType, FieldValue}, db_err::DBError, modify_where::FilterCondition, sort_method::SortCondition, table::{load_database, Table}
 };
 
 
@@ -20,14 +16,14 @@ pub enum Query {
     /// EDIT (val1, val2, ..., valn) INTO (table) (col1, col2, ..., coln)
     EDIT(Vec<String>, String, Vec<String>),
 
-    /// REMOVE FROM (table) WHERE (condition)
-    // FIXME: DELETE(String, FilterCondition),
+    /// DELETE FROM (table) WHERE (column) (condition) (condition_value)
+    DELETE(String, String, FilterCondition, FieldValue),
 
     /// SORT (table) ON (sort_condition) COLUMN (column)
     SORT(String, SortCondition, String),
 
-    /// FILTER (table) ON (filter_condition)
-    // FIXME: FILTER(String, FilterCondition),
+    /// FILTER FROM (table) WHERE (column) (condition) (condition_value)
+    FILTER(String, String, FilterCondition, FieldValue),
 
     /// INDEX (table) (column)
     INDEX(String, String),
@@ -124,23 +120,28 @@ pub fn parse_query(command: String) -> Option<Query> {
             return Some(Query::EDIT(values, table, columns));
         }
     } else if main_query_command.starts_with("remove") {
-        // NOT IMPLEMENTED YET!
-        return None;
 
-        // REMOVE FROM (table) WHERE (condition)
-        // if let (Some(from_index), Some(where_index)) = ( 
-        //     parts.iter().position(|&s| s.to_lowercase() == "from"), 
-        //     parts.iter().position(|&s| s.to_lowercase() == "where")
-        // ) {
-        //     let table = parts[from_index + 1].trim_matches(|c| c == '(' || c == ')').to_string();
-        //     let condition = FilterCondition::parse_str( parts[where_index + 1] );
-        //     println!("{:?}", condition);
-        //     match condition {
-        //         None => return None,
-        //         Some(_) => (),
-        //     }
-        //     return Some(Query::DELETE(table, condition.unwrap()));
-        // }
+        // REMOVE FROM (table) WHERE (column) (condition) (field_value)
+        if let (Some(from_index), Some(where_index)) = ( 
+            parts.iter().position(|&s| s.to_lowercase() == "from"), 
+            parts.iter().position(|&s| s.to_lowercase() == "where")
+        ) {
+            let table = parts[from_index + 1].trim_matches(|c| c == '(' || c == ')').to_string();
+            let column = parts[where_index + 1].trim_matches(|c| c == '(' || c == ')').to_string();
+
+            // Parse FilterCondition (e.g., LessThan, GreaterThan, etc.)
+            let condition_str = parts[where_index + 2];
+            let condition = FilterCondition::parse_str(condition_str);
+
+            if let Some(cond) = condition {
+                // Parse FieldValue (e.g., 42, "string", etc.)
+                let field_value_str = String::from(parts[where_index + 3]);
+                let field_value = parse_into_field_value(&field_value_str);
+
+                // Return a valid DELETE query if all parts were successfully parsed
+                return Some(Query::DELETE(table, column, cond, field_value));
+            }
+        }
     } else if main_query_command.starts_with("sort") {
         // SORT (table) ON (sort_condition)
         if let Some(on_index) = parts.iter().position(|&s| s.to_lowercase() == "on") {
@@ -156,19 +157,26 @@ pub fn parse_query(command: String) -> Option<Query> {
             } else { return None }   
         }
     } else if main_query_command.starts_with("filter") {
-        // FILTER (table) ON (filter_condition)
-        // NOT IMPLEMENTED YET! FIX `FILTER_CONDITION`
-        return None;
-        // if let Some(on_index) = parts.iter().position(|&s| s.to_lowercase() == "on") {
-        //     let table = parts[1].trim_matches(|c| c == '(' || c == ')').to_string();
-        //     let filter_condition = FilterCondition::parse_str( parts[on_index + 1] );
-        //     println!("{:?}", filter_condition);
-        //     match filter_condition {
-        //         None => return None,
-        //         Some(_) => (),
-        //     }
-        //     return Some(Query::FILTER(table, filter_condition.unwrap()));
-        // }
+        // FILTER FROM (table) WHERE (column) (condition) (condition_value)
+        if let (Some(from_index), Some(where_index)) = ( 
+            parts.iter().position(|&s| s.to_lowercase() == "from"), 
+            parts.iter().position(|&s| s.to_lowercase() == "where")
+        ) {
+            let table = parts[from_index + 1].trim_matches(|c| c == '(' || c == ')').to_string();
+            let column = parts[where_index + 1].trim_matches(|c| c == '(' || c == ')').to_string();
+
+            // Parse FilterCondition (e.g., LessThan, GreaterThan, etc.)
+            let condition_str = parts[where_index + 2];
+            let condition = FilterCondition::parse_str(condition_str);
+
+            if let Some(cond) = condition {
+                // Parse FieldValue (e.g., 42, "string", etc.)
+                let field_value_str = String::from(parts[where_index + 3]);
+                let field_value = parse_into_field_value(&field_value_str);
+
+                return Some(Query::FILTER(table, column, cond, field_value));
+            }
+        }
     } else if main_query_command.starts_with("index") {
         // INDEX (table) (column)
         let table = parts[1].trim_matches(|c| c == '(' || c == ')').to_string();
@@ -212,7 +220,7 @@ pub fn parse_query(command: String) -> Option<Query> {
 
 
 
-pub fn execute_query(query: Query) -> Result<Table, DBError>{
+pub fn execute_query(query: Query) -> Result<Either<Table, String>, DBError>{
 
 
     match query {
@@ -222,7 +230,7 @@ pub fn execute_query(query: Query) -> Result<Table, DBError>{
 
             let r = db.get_select_columns(&col_names)?;
 
-            return Ok(r)
+            return Ok(Either::This(r))
         },
         Query::INSERT(new_vals, table, col_names) => {
             let file_path = format!("db_{table}.bin");
@@ -238,7 +246,7 @@ pub fn execute_query(query: Query) -> Result<Table, DBError>{
             db.insert_row(row)?;
             db.save()?;
 
-            return Ok(db)
+            return Ok(Either::This(db))
         },
         Query::EDIT(new_vals, table, col_names) => {
             let file_path = format!("db_{table}.bin");
@@ -254,7 +262,7 @@ pub fn execute_query(query: Query) -> Result<Table, DBError>{
             
             db.sort_rows(condition, column)?;
 
-            return Ok(db)
+            return Ok(Either::This(db))
         },
         Query::INDEX(_, _) => todo!(),
         Query::CREATE(table, col_names, datatypes, keys) => {
@@ -263,10 +271,33 @@ pub fn execute_query(query: Query) -> Result<Table, DBError>{
                 let column_is_key = keys.contains(col);
                 columns.push(Column::new(col.clone(), datatype.clone(), column_is_key));
             }
-            let db = Table::new(table, columns);
+            let db = Table::new(table.clone(), columns);
             let _ = db.save();
+            return Ok(Either::That(format!("Created table '{table}'")))
+        },
+        Query::DELETE(table , column, filter_condition, field_value) => {
+            let file_path = format!("db_{table}.bin");
+            let mut db = load_database(&file_path)?;
+            let number_of_rows_deleted = db.delete_rows_where(column, filter_condition, field_value)?;
+            let _ = db.save()?;
+            return Ok(Either::That(format!("deleted {} row(s)", number_of_rows_deleted)));
+        },
+        Query::FILTER(table , column, filter_condition, field_value) => {
+            let file_path = format!("db_{table}.bin");
+            let mut db = load_database(&file_path)?;
+
+            let filtered_table = db.filter_rows(&column, filter_condition, field_value)?; 
+            return Ok(Either::This(filtered_table))
         },
     }
 
     Err( DBError::ActionNotImplemented("execute_query".to_owned()) )
+}
+
+
+/// used exclusively for query execution, so that I can return a 
+/// "number of rows affected" statement or the table
+pub enum Either<X, Y> {
+    This(X),
+    That(Y),
 }

@@ -169,11 +169,11 @@ impl Table {
     /// returns a u32 of the number of rows deleted if the function does not fail.
     pub fn delete_rows_where(&mut self, column_name: String, search_criteria: FilterCondition, search_value: FieldValue ) -> Result<u32, DBError> {
 
-        let filter_result: Result<Vec<HashMap<String, FieldValue>>, DBError> = self.filter_rows(&column_name, search_criteria, search_value);
+        let filter_result: Result<Table, DBError> = self.filter_rows(&column_name, search_criteria, search_value);
 
         match filter_result { Err(e) => return Err(e), Ok(_) => () };
         let rows_to_delete = filter_result.unwrap();    // safe to unwrap, if it was an err then the line above would early return
-
+        let rows_to_delete = rows_to_delete.rows();
 
         let mut kept_rows: Vec<HashMap<String, FieldValue>> = Vec::new(); 
         // loop through all rows, if the row is not in `rows_to_delete`, add it to `kept_rows`, which is to then override the existing rows
@@ -310,8 +310,9 @@ impl Table {
     }
 
 
+    /// creates a completely new instance of table  with the filtered values
     pub fn filter_rows(&mut self, column_name: &String, search_criteria: FilterCondition, value: FieldValue) 
-    -> Result< Vec<HashMap<String, FieldValue>>, DBError> {
+    -> Result< Table, DBError> {
 
         // check if column actually exists
         if !self.is_valid_column( &column_name ) { 
@@ -330,43 +331,46 @@ impl Table {
             // the row matches the criteria
             let row_copy: HashMap<String, FieldValue> = row.clone();
 
+            // TODO: need to figure out a way to properly implement taking 2 vals for `between`
             // make sure that if the search criteria requires a number, the `target_value`
             // recieved is a number
-            match search_criteria {
-                FilterCondition::GreaterThan | FilterCondition::GreaterThanOrEqualTo | 
-                FilterCondition::LessThan    | FilterCondition::LessThanOrEqualTo | 
-                FilterCondition::NumberBetween(_, _) => {
-                    if !target_value.is_number() { 
-                        return Err(DBError::MisMatchDataType(DataType::Number, target_value.data_type()));
-                    }
-                }
+            // match search_criteria {
+            //     FilterCondition::GreaterThan | FilterCondition::GreaterThanOrEqualTo | 
+            //     FilterCondition::LessThan    | FilterCondition::LessThanOrEqualTo | 
+            //     FilterCondition::NumberBetween(_, _) => {
+            //         if !target_value.is_number() { 
+            //             return Err(DBError::MisMatchDataType(DataType::Number, target_value.data_type()));
+            //         }
+            //     }
 
-                FilterCondition::DateBetween(_, _) => {
-                    if !target_value.is_date() {
-                        return Err(
-                            DBError::MisMatchDataType(DataType::Date, target_value.data_type())
-                        );
-                    }
-                }
+            //     FilterCondition::DateBetween(_, _) => {
+            //         if !target_value.is_date() {
+            //             return Err(
+            //                 DBError::MisMatchDataType(DataType::Date, target_value.data_type())
+            //             );
+            //         }
+            //     }
 
-                _ => {}
+            //     _ => {}
                 
-            }
+            // }
 
             // criteria validation
             let row_matches_search_critieria = match search_criteria {
-                FilterCondition::NumberBetween(l, u)                    => target_value.is_between(l, u),
-                FilterCondition::DateBetween(l, u)  => target_value.date_is_between(l, u),
+                // FilterCondition::NumberBetween(l, u)                    => target_value.is_between(l, u),
+                // FilterCondition::DateBetween(l, u)  => target_value.date_is_between(l, u),
                 FilterCondition::LessThan             => target_value.is_less_than(&value),
                 FilterCondition::LessThanOrEqualTo    => target_value.is_leq(&value),
                 FilterCondition::GreaterThan          => target_value.is_greater_than(&value),
                 FilterCondition::GreaterThanOrEqualTo => target_value.is_geq(&value),
                 FilterCondition::Equal                =>  Ok(target_value.eq(&value)),
                 FilterCondition::NotEqual             => Ok(!target_value.eq(&value)),
-                FilterCondition::Like                 => Ok(false),
-                FilterCondition::NotLike              => Ok(false),
+                FilterCondition::Like                 => Err(DBError::ActionNotImplemented("like filter condition".to_owned())),
+                FilterCondition::NotLike              => Err(DBError::ActionNotImplemented("not like filter condition".to_owned())),
                 FilterCondition::True                 => Ok(target_value.eq( &FieldValue::Boolean(true)  )),
                 FilterCondition::False                => Ok(target_value.eq( &FieldValue::Boolean(false) )),
+                FilterCondition::Null                 => Ok( target_value.eq(&FieldValue::Null)),
+                FilterCondition::NotNull              => Ok(!target_value.eq(&FieldValue::Null)),
             };
 
             if row_matches_search_critieria.is_err() {
@@ -379,7 +383,13 @@ impl Table {
 
         }
 
-        Ok( matching_rows )
+        let mut filtered_table = Table::new(self.name.clone(), self.columns().clone());
+
+        for r in matching_rows {
+            filtered_table.insert_row(r)?
+        }
+
+        Ok( filtered_table )
     }
 
 
@@ -435,7 +445,7 @@ impl Table {
 impl Table {
     pub fn to_ascii(&self) -> String {
         // Header for the table
-        let mut result = String::new();
+        let mut result = String::from("\n");
         let column_names = self.all_column_names();
         
         // Calculate the width of each column for formatting purposes

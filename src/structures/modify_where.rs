@@ -1,7 +1,5 @@
 use core::fmt;
 
-use chrono::{DateTime, Utc};
-
 
 /// TODO: add to parse_str() the ability to parse notlike, numberbetween, datebetween
 #[derive(Debug)]
@@ -14,19 +12,19 @@ pub enum FilterCondition {
     NotEqual,
     Like,
     NotLike,
-    /// an inclusive range between two floats
-    NumberBetween(f64, f64),
-    /// an inclusive range between two dates
-    DateBetween(DateTime<Utc>, DateTime<Utc>),
     True,
     False,
- 
+    Null,
+    NotNull
+
     // === UNABLE TO IMPLEMENT YET ===
-    // Null,
-    // NotNull
     //KeyIs(String),   
     //KeyIsNot(String),
-
+    // an inclusive range between two floats
+    // NumberBetween(f64, f64),
+    // an inclusive range between two dates
+    // DateBetween(DateTime<Utc>, DateTime<Utc>),
+    
 }
 
 impl FilterCondition {
@@ -63,8 +61,8 @@ impl fmt::Display for FilterCondition {
             FilterCondition::NotLike              => write!(f, "NotLike"),
             FilterCondition::True                 => write!(f, "IsTrue"),
             FilterCondition::False                => write!(f, "IsFalse"),
-            FilterCondition::NumberBetween(a, b) => write!(f, "NumberBetween ({}, {})", a, b),
-            FilterCondition::DateBetween(a, b) => write!(f, "DateBetween ({}, {}", a, b),
+            FilterCondition::Null                 => write!(f, "Null"),
+            &FilterCondition::NotNull             => write!(f, "NotNull"),
         }
     }
 }
