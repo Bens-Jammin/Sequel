@@ -1,9 +1,10 @@
-use std::{cmp::Ordering, collections::HashMap, fs::{File, OpenOptions}, io::{Read, Write}};
+use core::hash;
+use std::{cmp::{max, Ordering}, collections::HashMap, fs::{File, OpenOptions}, io::{Read, Write}, ops::Index, usize};
+use comfy_table::Width;
 use serde::{Deserialize, Serialize};
 use bincode;
-
 use crate::structures::{column::{Column, DataType, FieldValue}, db_err::DBError, modify_where::FilterCondition, sort_method::SortCondition};
-
+use bplustree::BPlusTree;
 
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -15,7 +16,6 @@ pub struct Table {
     /// what are you gonna do about it?
     rows: Vec<HashMap<String, FieldValue>>
 }
-
 
 
 // |===========================|
@@ -211,19 +211,12 @@ impl Table {
     }
     
     
-    pub fn index_columns(&self, column_name: String) -> Result<(), DBError>{
+    pub fn index_column(&self, column_name: String) 
+    -> Result<BPlusTree<FieldValue, HashMap<String, FieldValue>>, DBError> {
     
-        // check to make sure the column given exists
-        // then make sure the column can be indexed (i.e. cannot be a boolean, etc)
+        if self.column(column_name.clone()).is_none() { return Err(DBError::InvalidColumn(column_name.clone())) }
 
-        // create a tree where the items are sorted by their column value
-        
-        // TODO: if a column is indexed, you can retrieve rows in `filter_rows()`
-        // by using a `get_row_from_index()` method which needs to be made 
-    
-    
-        panic!("Not implemented yet!")
-    
+        Err(DBError::ActionNotImplemented("indexing a table".to_owned()))
     }
 }
 
@@ -444,60 +437,39 @@ impl Table {
 // |===========================|
 impl Table {
     pub fn to_ascii(&self) -> String {
-        // Header for the table
-        let mut result = String::from("\n");
-        let column_names = self.all_column_names();
-        
-        // Calculate the width of each column for formatting purposes
-        let mut column_widths: Vec<usize> = column_names.iter()
-            .map(|name| name.len())
-            .collect();
-        
-        // Update column widths based on the content in rows
-        for row in &self.rows {
-            for (i, col_name) in column_names.iter().enumerate() {
-                if let Some(value) = row.get(col_name) {
-                    let value_str = value.to_string();
-                    if value_str.len() > column_widths[i] {
-                        column_widths[i] = value_str.len();
-                    }
-                }
+
+        let mut text_table = comfy_table::Table::new();
+
+        let mut header_row: Vec<comfy_table::Cell> = Vec::new();
+        for col in self.columns() {
+            let cell = comfy_table::Cell::new(format!("{}\n({})", col.get_name(), col.get_data_type() ))
+            .set_alignment(comfy_table::CellAlignment::Center);
+            header_row.push(cell);
+
+        }
+        text_table.set_header(header_row);
+
+
+        for row in self.rows() {
+            let mut formatted_row: Vec<String> = Vec::new();
+            for col in self.columns() {
+                formatted_row.push( row.get(col.get_name()).unwrap().to_string() )
             }
+            text_table.add_row(formatted_row);
         }
-        
-        // Add the column names to the result with padding
-        for (i, col_name) in column_names.iter().enumerate() {
-            result.push_str(&format!("| {:width$} ", col_name, width = column_widths[i]));
-        }
-        result.push_str("|\n");
-        
-        // Add a separator between the column names and data
-        for width in &column_widths {
-            result.push_str(&format!("|{:-<width$}", "", width = *width + 2));
-        }
-        result.push_str("|\n");
-        
-        // Add the rows to the result
-        for row in &self.rows {
-            for (i, col_name) in column_names.iter().enumerate() {
-                let value = row.get(col_name).map_or("".to_string(), |v| v.to_string());
-                result.push_str(&format!("| {:width$} ", value, width = column_widths[i]));
-            }
-            result.push_str("|\n");
-        }
-        
-        result
+
+        format!("\n{}", text_table.to_string())
     }
 }
 
 
 impl Table {
-    pub fn save(&self) -> Result<(), DBError> {
+    pub fn save(&self, local_path: String) -> Result<(), DBError> {
 
-        let file_path = format!("db_{}.bin", self.name);
+        let file_path = format!("{}/db_{}.bin",local_path, self.name);
 
         let encoded_data = bincode::serialize(&self);
-        if encoded_data.is_err(     ) { return Err(DBError::DataBaseFileFailure(file_path.to_owned())) }
+        if encoded_data.is_err() { return Err(DBError::DataBaseFileFailure(file_path.to_owned())) }
         let encoded_data = encoded_data.unwrap();
 
         let file = OpenOptions::new()
@@ -551,5 +523,13 @@ pub fn load_database(file_path: &str) -> Result<Table, DBError> {
     } else {
         Ok(decoded_data.unwrap())
     }
+}
 
+
+pub fn save_index(table_name: &str, column_name: &str, b_plus_tree: BPlusTree<FieldValue, HashMap<String, FieldValue>>){
+}
+
+
+/// Result<BPlusTree<FieldValue, HashMap<String, FieldValue>>, DBError>
+pub fn load_index(table_name: &str, column_name: &str, b_plus_tree: BPlusTree<FieldValue, HashMap<String, FieldValue>>){
 }

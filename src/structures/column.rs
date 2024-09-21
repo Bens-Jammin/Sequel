@@ -20,9 +20,9 @@ impl Column {
         Column {name:name, data_type:data_type, is_primary_key:is_primary_key }
     }
 
-    pub fn get_name(&self)       -> &str   { &self.name }
+    pub fn get_name(&self)       -> &str      { &self.name }
     pub fn get_data_type(&self)  -> &DataType { &self.data_type }
-    pub fn is_primary_key(&self) -> bool     { self.is_primary_key }
+    pub fn is_primary_key(&self) -> bool      { self.is_primary_key }
 }
 
 
@@ -46,6 +46,63 @@ pub enum FieldValue {
     Null
 }
 
+impl PartialOrd for FieldValue {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match (self, other) {
+            (FieldValue::String(s1), FieldValue::String(s2)) => Some(s1.cmp(s2)),
+            (FieldValue::Number(n1), FieldValue::Number(n2)) => Some(n1.total_cmp(n2)),
+            (FieldValue::Date(d1), FieldValue::Date(d2)) => Some(d1.cmp(d2)),
+            (FieldValue::Url(u1), FieldValue::Url(u2)) => Some(u1.cmp(u2)),
+            (FieldValue::Boolean(b1), FieldValue::Boolean(b2)) => Some(b1.cmp(b2)),
+            _ => None
+        }
+    }
+}
+
+impl Eq for FieldValue {}
+
+impl Ord for FieldValue {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (FieldValue::String(s0), FieldValue::String(s1)) => s0.cmp(s1),
+            (FieldValue::Number(n1), FieldValue::Number(n2)) => n1.total_cmp(n2),
+            (FieldValue::Date(d1), FieldValue::Date(d2)) => d1.cmp(d2),
+            (FieldValue::Url(u1), FieldValue::Url(u2)) => u1.cmp(u2),
+            (FieldValue::Boolean(b1), FieldValue::Boolean(b2)) => b1.cmp(b2),
+            (FieldValue::Null, _) => Ordering::Less,
+            _ => Ordering::Equal
+        }
+    }
+    
+    fn max(self, other: Self) -> Self
+    where
+        Self: Sized,
+    {
+        std::cmp::max_by(self, other, Ord::cmp)
+    }
+    
+    fn min(self, other: Self) -> Self
+    where
+        Self: Sized,
+    {
+        std::cmp::min_by(self, other, Ord::cmp)
+    }
+    
+    fn clamp(self, min: Self, max: Self) -> Self
+    where
+        Self: Sized,
+        Self: PartialOrd,
+    {
+        assert!(min <= max);
+        if self < min {
+            min
+        } else if self > max {
+            max
+        } else {
+            self
+        }
+    }
+}
 
 /// this is gonna be such a piece of shit to unwrap
 /// 
@@ -303,11 +360,11 @@ impl FieldValue {
 impl fmt::Display for FieldValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FieldValue::String(_)  => write!(f, "String"),
-            FieldValue::Number(_)  => write!(f, "Number"),
-            FieldValue::Date(_)    => write!(f, "Date"),
-            FieldValue::Url(_)     => write!(f, "Url"),
-            FieldValue::Boolean(_) => write!(f, "Boolean"),
+            FieldValue::String(v)  => write!(f, "{v}"),
+            FieldValue::Number(v)  => write!(f, "{v}"),
+            FieldValue::Date(v)    => write!(f, "{v}"),
+            FieldValue::Url(v)     => write!(f, "{v}"),
+            FieldValue::Boolean(v) => write!(f, "{v}"),
             FieldValue::Null       => write!(f, "Null")
         }
     }

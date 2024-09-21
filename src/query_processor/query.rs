@@ -1,4 +1,7 @@
+use core::fmt;
 use std::collections::HashMap;
+
+use serde_json::value::Index;
 
 use crate::structures::{
     self, column::{parse_into_field_value, parse_str, Column, DataType, FieldValue}, db_err::DBError, modify_where::FilterCondition, sort_method::SortCondition, table::{load_database, Table}
@@ -31,6 +34,63 @@ pub enum Query {
     // CREATE (table_name) COLUMNS (col_name1:data_type1, etc) KEYS (col_name_1, etc)
     CREATE(String, Vec<String>, Vec<DataType>, Vec<String>),
 
+}
+
+
+pub fn list_queries() -> String {
+
+    let mut query_list = String::from("\n");
+    for (idx, q) in all_queries().iter().enumerate() {
+        query_list += &format!("{}) {q}\n", idx+1);
+    }
+    query_list
+}
+
+
+fn all_queries() -> Vec<Query> {
+    let s = String::new();
+    let cs = vec![String::new()];
+    let dts = vec![DataType::Number];
+    let sc = SortCondition::AlphaAscending;
+    let fc = FilterCondition::Null;
+    let fv = FieldValue::Null;
+    let fc2 = FilterCondition::Null;
+    let fv2 = FieldValue::Null;
+
+
+    vec![
+        Query::SELECT(cs.clone(), s.clone()),
+        Query::INSERT(cs.clone(), s.clone(), cs.clone()),
+        Query::EDIT(cs.clone(), s.clone(), cs.clone()),
+        Query::DELETE(s.clone(), s.clone(), fc, fv),
+        Query::SORT(s.clone(), sc, s.clone()),
+        Query::FILTER(s.clone(), s.clone(), fc2, fv2),
+        Query::INDEX(s.clone(), s.clone()),
+        Query::CREATE(s, cs.clone(), dts, cs)
+    ]
+}
+
+impl fmt::Display for Query {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Query::SELECT(_, _) 
+            => write!(f, "SELECT (col1, col2, ...) FROM {{table_name}}"),
+            Query::INSERT(_, _, _) 
+            => write!(f, "INSERT (val1, val2, ...) INTO {{table}} (col1, col2, ..."),
+            Query::EDIT(_, _, _) 
+            => write!(f, "EDIT (val1, val2, ..., valn) INTO {{table}} (col1, col2, ...)"),
+            Query::DELETE(_, _, _, _) 
+            => write!(f, "DELETE FROM {{table}} WHERE {{column}} {{condition}} {{condition_value}}"),
+            Query::SORT(_, _, _)
+             => write!(f, "SORT {{table}} ON {{sort_condition}} COLUMN {{column}}"),
+            Query::FILTER(_, _, _, _)
+             => write!(f, "FILTER FROM {{table}} WHERE {{column}} {{condition}} {{condition_value}}"),
+            Query::INDEX(_, _)
+             => write!(f, "INDEX {{table}} {{column}}"),
+            Query::CREATE(_, _, _, _)
+             => write!(f, "CREATE {{table_name}} COLUMNS (col_name1:data_type1, ...) KEYS (col_name_1, ...)"),
+        }
+    }
 }
 
 
@@ -219,13 +279,16 @@ pub fn parse_query(command: String) -> Option<Query> {
 }
 
 
+/// # NOTE 
+/// local path must be where **ALL** files will be stored. Both relations **AND** indexes
+pub fn execute_query(query: Query, save_dir: &str) -> Result<Either<Table, String>, DBError>{
 
-pub fn execute_query(query: Query) -> Result<Either<Table, String>, DBError>{
-
+    let relation_directory = format!("{}/relations", save_dir);
+    let index_directory = format!("{}/indexes", save_dir);
 
     match query {
         Query::SELECT(col_names, table) => {
-            let file_path = format!("db_{table}.bin");
+            let file_path = format!("{}/db_{table}.bin", &relation_directory);
             let db = structures::table::load_database(&file_path)?;
 
             let r = db.get_select_columns(&col_names)?;
@@ -233,7 +296,7 @@ pub fn execute_query(query: Query) -> Result<Either<Table, String>, DBError>{
             return Ok(Either::This(r))
         },
         Query::INSERT(new_vals, table, col_names) => {
-            let file_path = format!("db_{table}.bin");
+            let file_path = format!("{}/db_{table}.bin", &relation_directory);
             let mut db = structures::table::load_database(&file_path)?;
             
             let mut row: HashMap<String, FieldValue> = HashMap::new();
@@ -241,15 +304,15 @@ pub fn execute_query(query: Query) -> Result<Either<Table, String>, DBError>{
             for (col_name, new_val) in col_names.iter().zip(new_vals) {
                 let datatype = parse_into_field_value(&new_val);
                 row.insert(col_name.to_owned(), datatype);
-            } 
+            }
 
             db.insert_row(row)?;
-            db.save()?;
+            db.save(relation_directory)?;
 
             return Ok(Either::This(db))
         },
         Query::EDIT(new_vals, table, col_names) => {
-            let file_path = format!("db_{table}.bin");
+            let file_path = format!("{}/db_{table}.bin", &relation_directory);
             let db = structures::table::load_database(&file_path)?;
 
             // let r = db.edit_rows_where()
@@ -257,14 +320,21 @@ pub fn execute_query(query: Query) -> Result<Either<Table, String>, DBError>{
             // db.save();
         },
         Query::SORT(table, condition, column) => {
-            let file_path = format!("db_{table}.bin");
+            let file_path = format!("{}/db_{table}.bin", &relation_directory);
             let mut db = structures::table::load_database(&file_path)?;
             
             db.sort_rows(condition, column)?;
 
             return Ok(Either::This(db))
         },
-        Query::INDEX(_, _) => todo!(),
+        Query::INDEX(table, column) => {
+            let file_path = format!("{}/db_{table}.bin", &relation_directory);
+            let db = structures::table::load_database(&file_path)?;
+            let index = db.index_column(column)?;
+            // save index
+            // return a message saying the index on {column} was created
+            return Err(DBError::ActionNotImplemented("indexing a table".to_owned()))
+        },
         Query::CREATE(table, col_names, datatypes, keys) => {
             let mut columns: Vec<Column> = Vec::new();
             for (col, datatype) in col_names.iter().zip(datatypes.iter()) {
@@ -272,18 +342,18 @@ pub fn execute_query(query: Query) -> Result<Either<Table, String>, DBError>{
                 columns.push(Column::new(col.clone(), datatype.clone(), column_is_key));
             }
             let db = Table::new(table.clone(), columns);
-            let _ = db.save();
+            let _ = db.save(relation_directory);
             return Ok(Either::That(format!("Created table '{table}'")))
         },
         Query::DELETE(table , column, filter_condition, field_value) => {
-            let file_path = format!("db_{table}.bin");
+            let file_path = format!("{}/db_{table}.bin", &relation_directory);
             let mut db = load_database(&file_path)?;
             let number_of_rows_deleted = db.delete_rows_where(column, filter_condition, field_value)?;
-            let _ = db.save()?;
+            let _ = db.save(relation_directory)?;
             return Ok(Either::That(format!("deleted {} row(s)", number_of_rows_deleted)));
         },
         Query::FILTER(table , column, filter_condition, field_value) => {
-            let file_path = format!("db_{table}.bin");
+            let file_path = format!("{}/db_{table}.bin", &relation_directory);
             let mut db = load_database(&file_path)?;
 
             let filtered_table = db.filter_rows(&column, filter_condition, field_value)?; 
