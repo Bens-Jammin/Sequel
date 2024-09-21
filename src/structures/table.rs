@@ -447,6 +447,7 @@ impl Table {
             header_row.push(cell);
 
         }
+
         text_table.set_header(header_row);
 
 
