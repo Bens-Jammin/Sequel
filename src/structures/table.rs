@@ -1,10 +1,7 @@
-use core::hash;
-use std::{cmp::{max, Ordering}, collections::HashMap, fs::{File, OpenOptions}, io::{Read, Write}, ops::Index, usize};
-use comfy_table::Width;
+use std::{cmp::Ordering, collections::{BTreeMap, HashMap}, fs::{File, OpenOptions}, io::{Read, Write}, usize};
 use serde::{Deserialize, Serialize};
 use bincode;
 use crate::structures::{column::{Column, DataType, FieldValue}, db_err::DBError, modify_where::FilterCondition, sort_method::SortCondition};
-use bplustree::BPlusTree;
 
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -212,11 +209,21 @@ impl Table {
     
     
     pub fn index_column(&self, column_name: String) 
-    -> Result<BPlusTree<FieldValue, HashMap<String, FieldValue>>, DBError> {
+    -> Result<BTreeMap<FieldValue, u64>, DBError> {
     
         if self.column(column_name.clone()).is_none() { return Err(DBError::InvalidColumn(column_name.clone())) }
 
-        Err(DBError::ActionNotImplemented("indexing a table".to_owned()))
+        
+        // TODO: implement a btree map on the column, the value is the **INDEX OF THE ROW**
+
+        let mut index: BTreeMap<FieldValue, u64> = BTreeMap::new();
+
+        for (row_index, row) in self.rows().iter().enumerate() {
+            let index_key = row.get( &column_name ).unwrap();
+            index.insert(index_key.clone(), row_index as u64);              
+        }
+
+        Ok(index)
     }
 }
 
@@ -450,7 +457,6 @@ impl Table {
 
         text_table.set_header(header_row);
 
-
         for row in self.rows() {
             let mut formatted_row: Vec<String> = Vec::new();
             for col in self.columns() {
@@ -491,7 +497,6 @@ impl Table {
 
 
 
-    
 /// loads a database given a filepath. File must be a binary file (extension .bin)
 /// 
 /// ### Note
@@ -527,10 +532,29 @@ pub fn load_database(file_path: &str) -> Result<Table, DBError> {
 }
 
 
-pub fn save_index(table_name: &str, column_name: &str, b_plus_tree: BPlusTree<FieldValue, HashMap<String, FieldValue>>){
+pub fn save_index(save_dir: &str, table_name: &str, column_name: &str, tree: BTreeMap<FieldValue, u64>) {
+
+    let file_path: String = format!("{}/idx_{}_{}.bin", save_dir, table_name, column_name);
+    let encoded_data = bincode::serialize(&tree).unwrap();
+
+    let mut file = File::create(file_path).unwrap();
+    file.write_all(&encoded_data).unwrap();
 }
 
 
-/// Result<BPlusTree<FieldValue, HashMap<String, FieldValue>>, DBError>
-pub fn load_index(table_name: &str, column_name: &str, b_plus_tree: BPlusTree<FieldValue, HashMap<String, FieldValue>>){
+pub fn load_data(save_dir: &str, table_name: &str, column_name: &str) -> Option<BTreeMap<FieldValue, u64>> {
+    let file_path: String = format!("{}/idx_{}_{}.bin", save_dir, table_name, column_name);
+    let file = File::open(file_path);
+    if file.is_err() { return None; }
+    let mut file = file.unwrap(); 
+
+    let mut data_buffer = Vec::new();
+    let r = file.read_to_end(&mut data_buffer);
+    if r.is_err() { return None; }
+
+
+    let tree = bincode::deserialize(&data_buffer);
+    if tree.is_err() { return None; }
+
+    Some(tree.unwrap())    
 }
