@@ -288,7 +288,7 @@ pub fn execute_query(query: Query, save_dir: &str) -> Result<Either<Table, Strin
             let file_path = format!("{}/db_{table}.bin", &relation_directory);
             let db = structures::table::load_database(&file_path)?;
 
-            let r = db.get_select_columns(&col_names)?;
+            let r = db.select_columns(&col_names)?;
 
             return Ok(Either::This(r))
         },
@@ -312,7 +312,7 @@ pub fn execute_query(query: Query, save_dir: &str) -> Result<Either<Table, Strin
             let file_path = format!("{}/db_{table}.bin", &relation_directory);
             let db = structures::table::load_database(&file_path)?;
             // TODO: edit implementation
-            // let r = db.edit_rows_where()
+            // let r = db.edit_rows()
 
             // db.save();
         },
@@ -347,7 +347,7 @@ pub fn execute_query(query: Query, save_dir: &str) -> Result<Either<Table, Strin
         Query::DELETE(table , column, filter_condition, field_value) => {
             let file_path = format!("{}/db_{table}.bin", &relation_directory);
             let mut db = load_database(&file_path)?;
-            let number_of_rows_deleted = db.delete_rows_where(column, filter_condition, field_value)?;
+            let number_of_rows_deleted = db.delete_rows(column, filter_condition, field_value)?;
             let _ = db.save(relation_directory)?;
             return Ok(Either::That(format!("deleted {} row(s)", number_of_rows_deleted)));
         },
@@ -355,7 +355,7 @@ pub fn execute_query(query: Query, save_dir: &str) -> Result<Either<Table, Strin
             let file_path = format!("{}/db_{table}.bin", &relation_directory);
             let mut db = load_database(&file_path)?;
 
-            let filtered_table = db.filter_rows(&column, filter_condition, field_value)?; 
+            let filtered_table = db.select_rows(&column, filter_condition, field_value)?; 
             return Ok(Either::This(filtered_table))
         },
     }

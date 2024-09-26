@@ -12,4 +12,20 @@ add to your `cargo.toml` file under the "dependencies" section the following:
 sequel = "0.2.0"
 ```
 
-then call as any other dependency:
+## Available Operations
+
+### CREATE
+
+### INSERT
+
+### EDIT
+
+### DELETE
+
+### SELECT
+
+### PROJECT
+
+### SORT
+
+### INDEX

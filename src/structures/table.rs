@@ -1,7 +1,8 @@
 use std::{cmp::Ordering, collections::{BTreeMap, HashMap}, fs::{File, OpenOptions}, io::{Read, Write}, usize};
+use rand::seq::index;
 use serde::{Deserialize, Serialize};
 use bincode;
-use crate::structures::{column::{Column, DataType, FieldValue}, db_err::DBError, modify_where::FilterCondition, sort_method::SortCondition};
+use crate::{config, structures::{column::{Column, DataType, FieldValue}, db_err::DBError, modify_where::FilterCondition, sort_method::SortCondition}};
 
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -14,6 +15,16 @@ pub struct Table {
     rows: Vec<HashMap<String, FieldValue>>
 }
 
+/// ====================================================================================
+/// TODO: 
+/// * (TOP PRIORITY) learn how to cache values (such as the index and relation paths)
+/// * (TOP PRIORITY) learn how to use the config file in other projects (i.e. the server)
+/// * (TOP PRIORITY) test index efficiency with different sized tables
+/// * (MED PRIORITY) test config file in database
+/// * (MED PRIORITY) test indexing (creation, saving, loading)
+/// * (LOW PRIORITY) allow exporting / importing from csv, excel files
+/// =====================================================================================
+
 
 // |===========================|
 // |     utility functions     |
@@ -22,6 +33,7 @@ pub struct Table {
 impl Table {
     pub fn rows(&self) -> &Vec<HashMap<String, FieldValue>> { &self.rows }
 
+    pub fn get_row(&self, row_index: u64) -> Option<&HashMap<String, FieldValue>> { self.rows.get(row_index as usize) }
 
     pub fn columns(&self) -> &Vec<Column> { &self.columns }
 
@@ -87,7 +99,6 @@ impl Table {
         let mut primary_keys: Vec<Column> = Vec::new();
         for c in &columns {
             
-            // !!! FIXME: **MAKE SURE USER DOES NOT SET `Null` AS COL DATATYPE !!!
             if !c.is_primary_key() { continue; }
     
             let pk = c.clone();
@@ -158,15 +169,36 @@ impl Table {
 
 
 
-    pub fn edit_rows_where(&mut self) {panic!("not implemented yet!")}
+    pub fn edit_rows(&mut self, column_name: String, search_criteria: FilterCondition, search_value: FieldValue, new_value: FieldValue) -> Result<u32, DBError>{
+    
+        let filter_result: Result<Table, DBError> = self.select_rows(&column_name, search_criteria, search_value);
+
+        match filter_result { Err(e) => return Err(e), Ok(_) => () };
+        let rows_to_edit = filter_result.unwrap();
+        let rows_to_edit = rows_to_edit.rows();
+
+        let mut updated_rows: Vec<HashMap<String, FieldValue>> = Vec::new(); 
+        for mut row in self.rows().clone() {
+            if rows_to_edit.contains( &row ) {
+                *row.get_mut(&column_name).unwrap() = new_value.clone();
+                updated_rows.push( row );
+            } else { updated_rows.push(row);}
+        }
+
+        let number_of_changed_rows = rows_to_edit.len() as u32;
+
+        self.rows = updated_rows;
+
+        Ok(number_of_changed_rows)
+    }
 
 
     /// uses the `Table::filter_rows()` function to determine which rows are to be deleted.
     /// 
     /// returns a u32 of the number of rows deleted if the function does not fail.
-    pub fn delete_rows_where(&mut self, column_name: String, search_criteria: FilterCondition, search_value: FieldValue ) -> Result<u32, DBError> {
+    pub fn delete_rows  (&mut self, column_name: String, search_criteria: FilterCondition, search_value: FieldValue ) -> Result<u32, DBError> {
 
-        let filter_result: Result<Table, DBError> = self.filter_rows(&column_name, search_criteria, search_value);
+        let filter_result: Result<Table, DBError> = self.select_rows(&column_name, search_criteria, search_value);
 
         match filter_result { Err(e) => return Err(e), Ok(_) => () };
         let rows_to_delete = filter_result.unwrap();    // safe to unwrap, if it was an err then the line above would early return
@@ -213,8 +245,6 @@ impl Table {
     
         if self.column(column_name.clone()).is_none() { return Err(DBError::InvalidColumn(column_name.clone())) }
 
-        
-        // TODO: implement a btree map on the column, the value is the **INDEX OF THE ROW**
 
         let mut index: BTreeMap<FieldValue, u64> = BTreeMap::new();
 
@@ -311,7 +341,7 @@ impl Table {
 
 
     /// creates a completely new instance of table  with the filtered values
-    pub fn filter_rows(&mut self, column_name: &String, search_criteria: FilterCondition, value: FieldValue) 
+    pub fn select_rows(&mut self, column_name: &String, search_criteria: FilterCondition, value: FieldValue) 
     -> Result< Table, DBError> {
 
         // check if column actually exists
@@ -320,6 +350,120 @@ impl Table {
         }
 
         let mut matching_rows: Vec<HashMap<String, FieldValue>> = Vec::new();
+
+        // TODO: implement `index_available` and get the index
+        matching_rows = if self.index_available(column_name, config::INDEX_PATH) {
+            self.search_without_index(column_name, search_criteria, value)?
+        } else {
+            let index = load_index(config::INDEX_PATH, &self.name, &column_name).unwrap();
+            self.search_with_index(index, search_criteria, value)?
+        };
+
+        
+        let mut filtered_table = Table::new(self.name.clone(), self.columns().clone());
+
+        for r in matching_rows {
+            filtered_table.insert_row(r)?
+        }
+
+        Ok( filtered_table )
+    }
+
+
+    pub fn index_available(&self, column_name: &str, save_dir: &str) -> bool {
+        let table_name = &self.name;
+        let path = format!("{save_dir}/{table_name}_{column_name}.bin");
+        File::open(path).is_ok()
+    }
+
+
+    fn search_with_index(&self, index: BTreeMap<FieldValue, Vec<u64>>, criteria: FilterCondition, value: FieldValue ) 
+    -> Result<Vec<HashMap<String, FieldValue>>, DBError> {
+
+        fn get_from_one_key(rows: Vec<HashMap<String, FieldValue>>, index: BTreeMap<FieldValue, Vec<u64>>, key: FieldValue)
+        -> Vec<HashMap<String, FieldValue>> {
+            let mut rows: Vec<HashMap<String, FieldValue>> = Vec::new();
+             if let Some(row_indices) = index.get(&key) {
+                for &row_index in row_indices {
+                    if let Some(row) = rows.get(row_index as usize) {
+                        rows.push(row.clone());
+                    }
+                }
+            }
+            rows
+        }
+
+        fn get_all_but_key(rows: Vec<HashMap<String, FieldValue>>, index: BTreeMap<FieldValue, Vec<u64>>, key: FieldValue)
+        -> Vec<HashMap<String, FieldValue>> {
+            let mut valid_rows: Vec<HashMap<String, FieldValue>> = Vec::new();
+
+            if let Some(row_indices_to_avoid) = index.get(&key) {
+                for (idx, row) in rows.iter().enumerate() {
+                    if row_indices_to_avoid.contains(&(idx as u64)) { continue; }
+                    valid_rows.push( row.clone() );
+                }
+            }
+            valid_rows
+        }
+ 
+
+
+        let mut matching_rows: Vec<HashMap<String, FieldValue>> = Vec::new();
+
+        // TODO: get values from the index depending on the criteria
+        match criteria {
+            FilterCondition::LessThan => {
+                for (key, row_indices) in index.range(..value) {
+                    for &row_index in row_indices {
+                        if let Some(row) = self.rows.get(row_index as usize) {
+                            matching_rows.push(row.clone());
+                        }
+                    }
+                }
+            },
+            FilterCondition::LessThanOrEqualTo => {
+                for (key, row_indices) in index.range(..=value) {
+                    for &row_index in row_indices {
+                        if let Some(row) = self.rows.get(row_index as usize) {
+                            matching_rows.push(row.clone());
+                        }
+                    }
+                }
+            },
+            FilterCondition::GreaterThan => {
+                for (key, row_indices) in index.range(value..) {
+                    for &row_index in row_indices {
+                        if let Some(row) = self.rows.get(row_index as usize) {
+                            matching_rows.push(row.clone());
+                        }
+                    }
+                }
+            },
+            FilterCondition::GreaterThanOrEqualTo => {
+                 for (key, row_indices) in index.range(value..) {
+                    for &row_index in row_indices {
+                        if let Some(row) = self.rows.get(row_index as usize) {
+                            matching_rows.push(row.clone());
+                        }
+                    }
+                }
+            },
+            FilterCondition::Equal    => { matching_rows.extend(get_from_one_key(self.rows, index, value)) },
+            FilterCondition::NotEqual => { matching_rows.extend( get_all_but_key(self.rows, index, value)) },
+            FilterCondition::True     => { matching_rows.extend(get_from_one_key(self.rows, index, FieldValue::Boolean(true)))  },
+            FilterCondition::False    => { matching_rows.extend(get_from_one_key(self.rows, index, FieldValue::Boolean(false))) },
+            FilterCondition::Null     => { matching_rows.extend(get_from_one_key(self.rows, index, FieldValue::Null)) },
+            FilterCondition::NotNull  => { matching_rows.extend( get_all_but_key(self.rows, index, FieldValue::Null)) },
+        }
+
+        Err(DBError::ActionNotImplemented("searching for rows with an index".to_string()))
+    }
+
+
+    fn search_without_index(&self, column_name: &String, criteria: FilterCondition, value: FieldValue) 
+    -> Result<Vec<HashMap<String, FieldValue>>, DBError> {
+
+        let mut matching_rows: Vec<HashMap<String, FieldValue>> = Vec::new(); 
 
         // loop through all rows, and if the row matches given criteria, add it to `matching_rows`
         for row in &self.rows {
@@ -332,41 +476,17 @@ impl Table {
             let row_copy: HashMap<String, FieldValue> = row.clone();
 
             // TODO: need to figure out a way to properly implement taking 2 vals for `between`
-            // make sure that if the search criteria requires a number, the `target_value`
-            // recieved is a number
-            // match search_criteria {
-            //     FilterCondition::GreaterThan | FilterCondition::GreaterThanOrEqualTo | 
-            //     FilterCondition::LessThan    | FilterCondition::LessThanOrEqualTo | 
-            //     FilterCondition::NumberBetween(_, _) => {
-            //         if !target_value.is_number() { 
-            //             return Err(DBError::MisMatchDataType(DataType::Number, target_value.data_type()));
-            //         }
-            //     }
-
-            //     FilterCondition::DateBetween(_, _) => {
-            //         if !target_value.is_date() {
-            //             return Err(
-            //                 DBError::MisMatchDataType(DataType::Date, target_value.data_type())
-            //             );
-            //         }
-            //     }
-
-            //     _ => {}
-                
-            // }
 
             // criteria validation
-            let row_matches_search_critieria = match search_criteria {
+            let row_matches_search_critieria = match criteria {
                 // FilterCondition::NumberBetween(l, u)                    => target_value.is_between(l, u),
                 // FilterCondition::DateBetween(l, u)  => target_value.date_is_between(l, u),
                 FilterCondition::LessThan             => target_value.is_less_than(&value),
                 FilterCondition::LessThanOrEqualTo    => target_value.is_leq(&value),
                 FilterCondition::GreaterThan          => target_value.is_greater_than(&value),
                 FilterCondition::GreaterThanOrEqualTo => target_value.is_geq(&value),
-                FilterCondition::Equal                =>  Ok(target_value.eq(&value)),
+                FilterCondition::Equal                => Ok( target_value.eq(&value)),
                 FilterCondition::NotEqual             => Ok(!target_value.eq(&value)),
-                FilterCondition::Like                 => Err(DBError::ActionNotImplemented("like filter condition".to_owned())),
-                FilterCondition::NotLike              => Err(DBError::ActionNotImplemented("not like filter condition".to_owned())),
                 FilterCondition::True                 => Ok(target_value.eq( &FieldValue::Boolean(true)  )),
                 FilterCondition::False                => Ok(target_value.eq( &FieldValue::Boolean(false) )),
                 FilterCondition::Null                 => Ok( target_value.eq(&FieldValue::Null)),
@@ -382,18 +502,12 @@ impl Table {
             }
 
         }
-
-        let mut filtered_table = Table::new(self.name.clone(), self.columns().clone());
-
-        for r in matching_rows {
-            filtered_table.insert_row(r)?
-        }
-
-        Ok( filtered_table )
+        Ok(matching_rows)
     }
 
 
-    pub fn get_select_columns(&self, column_names: &Vec<String>) -> Result<Table, DBError> {
+
+    pub fn select_columns(&self, column_names: &Vec<String>) -> Result<Table, DBError> {
         
         let table_name = format!("reduced version of '{}'", &self.name);
         let mut table_columns: Vec<Column> = Vec::new(); 
@@ -435,6 +549,8 @@ impl Table {
 
         Ok( reduced_table )
     }
+
+
 }
 
 
@@ -532,7 +648,7 @@ pub fn load_database(file_path: &str) -> Result<Table, DBError> {
 }
 
 
-pub fn save_index(save_dir: &str, table_name: &str, column_name: &str, tree: BTreeMap<FieldValue, u64>) {
+pub fn save_index(save_dir: &str, table_name: &str, column_name: &str, tree: BTreeMap<FieldValue, Vec<u64>>) {
 
     let file_path: String = format!("{}/idx_{}_{}.bin", save_dir, table_name, column_name);
     let encoded_data = bincode::serialize(&tree).unwrap();
@@ -542,7 +658,7 @@ pub fn save_index(save_dir: &str, table_name: &str, column_name: &str, tree: BTr
 }
 
 
-pub fn load_data(save_dir: &str, table_name: &str, column_name: &str) -> Option<BTreeMap<FieldValue, u64>> {
+pub fn load_index(save_dir: &str, table_name: &str, column_name: &str) -> Option<BTreeMap<FieldValue, Vec<u64>>> {
     let file_path: String = format!("{}/idx_{}_{}.bin", save_dir, table_name, column_name);
     let file = File::open(file_path);
     if file.is_err() { return None; }
