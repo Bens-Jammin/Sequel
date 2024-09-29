@@ -310,7 +310,9 @@ pub fn execute_query(query: Query, save_dir: &str) -> Result<Either<Table, Strin
         },
         Query::EDIT(new_vals, table, col_names) => {
             let file_path = format!("{}/db_{table}.bin", &relation_directory);
-            let db = structures::table::load_database(&file_path)?;
+            // let mut db = structures::table::load_database(&file_path)?;
+            
+            // let r = db.edit_rows()
             // TODO: edit implementation
             // let r = db.edit_rows()
 
@@ -327,9 +329,8 @@ pub fn execute_query(query: Query, save_dir: &str) -> Result<Either<Table, Strin
         Query::INDEX(table, column) => {
             let file_path = format!("{}/db_{table}.bin", &relation_directory);
             let db = structures::table::load_database(&file_path)?;
-            let index = db.index_column(column.clone())?;
+            db.index_column(column.clone())?;
             
-            table::save_index(&index_directory, &table, &column, index);
             // save index
             // return a message saying the index on {column} was created
             return Err(DBError::ActionNotImplemented("indexing a table".to_owned()))
