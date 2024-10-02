@@ -2,7 +2,7 @@ use core::fmt;
 
 
 /// TODO: add to parse_str() the ability to parse notlike, numberbetween, datebetween
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum FilterCondition {
     LessThan,
     LessThanOrEqualTo,
@@ -48,16 +48,16 @@ impl FilterCondition {
 impl fmt::Display for FilterCondition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FilterCondition::LessThan             => write!(f, "LessThan"),
-            FilterCondition::LessThanOrEqualTo    => write!(f, "LessThanOrEqualTo"),
-            FilterCondition::GreaterThan          => write!(f, "GreaterThan"),
-            FilterCondition::GreaterThanOrEqualTo => write!(f, "GreaterThanOrEqualTo"),
-            FilterCondition::Equal                => write!(f, "Equal"),
-            FilterCondition::NotEqual             => write!(f, "NotEqual"),
-            FilterCondition::True                 => write!(f, "IsTrue"),
-            FilterCondition::False                => write!(f, "IsFalse"),
+            FilterCondition::LessThan             => write!(f, "<"),
+            FilterCondition::LessThanOrEqualTo    => write!(f, "<="),
+            FilterCondition::GreaterThan          => write!(f, ">"),
+            FilterCondition::GreaterThanOrEqualTo => write!(f, ">="),
+            FilterCondition::Equal                => write!(f, "="),
+            FilterCondition::NotEqual             => write!(f, "!="),
+            FilterCondition::True                 => write!(f, "Is True"),
+            FilterCondition::False                => write!(f, "Is False"),
             FilterCondition::Null                 => write!(f, "Null"),
-            &FilterCondition::NotNull             => write!(f, "NotNull"),
+            &FilterCondition::NotNull             => write!(f, "Not Null"),
         }
     }
 }
