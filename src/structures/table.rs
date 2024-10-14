@@ -1,4 +1,6 @@
 use std::{cmp::Ordering, collections::{BTreeMap, HashMap}, fs::{File, OpenOptions}, io::{Read, Write}, usize};
+use chrono::DateTime;
+use comfy_table::presets::ASCII_MARKDOWN;
 use serde::{Deserialize, Serialize};
 use bincode;
 use crate::{
@@ -23,8 +25,6 @@ pub struct Table {
 /// TODO: 
 /// * (TOP PRIORITY) learn how to cache values (such as the index and relation paths)
 /// * (TOP PRIORITY) update b+ trees on update
-/// * (LOW PRIORITY) Make a b+ tree on the primary keys
-/// * (LOW PRIORITY) allow exporting / importing from csv, excel files
 /// =====================================================================================
 
 
@@ -114,12 +114,27 @@ impl Table {
             primary_keys.push(id_column.clone());
             let mut columns = columns.clone();
             columns.push(id_column)
+
         }
 
-        Self { name: name, columns: columns, primary_keys: primary_keys, rows: Vec::new() }
+        let instance = Self { name: name, columns: columns, primary_keys: primary_keys.clone(), rows: Vec::new() };
+
+        // generate indexes on all primary keys
+        for pk in &primary_keys {
+            let _ = instance.index_column(pk.get_name().to_owned());
+        }
+
+        instance
     }
 
     
+    fn update_index(&self, column_name: &str) -> Result<(), DBError> {
+        
+        let index_path = index_file_name(&self.name, column_name);
+        
+        Ok(())
+    } 
+
     /// inserts a new row into the database.
     pub fn insert_row(&mut self, row_data: HashMap<String, FieldValue> ) -> Result<(), DBError> {
 
@@ -130,7 +145,8 @@ impl Table {
             return Err(DBError::MissingPrimaryKeys( missing_primary_keys ));
         }
 
-        // TODO: inserting takes O(n) !! FIX ASAP
+        // TODO: inserting **ONE ROW** takes O(n) !! FIX ASAP
+        // implement a B+ tree to help fix it
         // make sure the primary key isnt already in the db
         // for pk in self.primary_keys() {
         //     let pk_name = pk.get_name();
@@ -199,7 +215,7 @@ impl Table {
     /// uses the `Table::filter_rows()` function to determine which rows are to be deleted.
     /// 
     /// returns a u32 of the number of rows deleted if the function does not fail.
-    pub fn delete_rows  (&mut self, column_name: String, search_criteria: FilterCondition, search_value: FieldValue ) -> Result<u32, DBError> {
+    pub fn delete_rows(&mut self, column_name: String, search_criteria: FilterCondition, search_value: FieldValue ) -> Result<u32, DBError> {
 
         let filter_result: Result<Table, DBError> = self.select_rows(&column_name, search_criteria, search_value);
 
@@ -267,6 +283,7 @@ impl Table {
 
         Ok(())
     }
+
 }
 
 
@@ -447,7 +464,6 @@ impl Table {
 
         let mut matching_rows: Vec<HashMap<String, FieldValue>> = Vec::new();
 
-        // TODO: get values from the index depending on the criteria
         match criteria {
             FilterCondition::LessThan => {
                 for (_, row_indices) in index.range(..value) {
@@ -491,6 +507,9 @@ impl Table {
             FilterCondition::False    => { matching_rows.extend(get_from_one_key(self.rows(), index, FieldValue::Boolean(false))) },
             FilterCondition::Null     => { matching_rows.extend(get_from_one_key(self.rows(), index, FieldValue::Null)) },
             FilterCondition::NotNull  => { matching_rows.extend( get_all_but_key(self.rows(), index, FieldValue::Null)) },
+            // TODO: complete this:
+            FilterCondition::NumberBetween => todo!(),
+            FilterCondition::DateBetween => todo!(),
         }
 
         Err(DBError::ActionNotImplemented("searching for rows with an index".to_string()))
@@ -510,12 +529,8 @@ impl Table {
             // the row matches the criteria
             let row_copy: HashMap<String, FieldValue> = row.clone();
 
-            // TODO: need to figure out a way to properly implement taking 2 vals for `between`
-
             // criteria validation
             let row_matches_search_critieria = match criteria {
-                // FilterCondition::NumberBetween(l, u)                    => target_value.is_between(l, u),
-                // FilterCondition::DateBetween(l, u)  => target_value.date_is_between(l, u),
                 FilterCondition::LessThan             => row_value.is_less_than(&target_value),
                 FilterCondition::LessThanOrEqualTo    => row_value.is_leq(&target_value),
                 FilterCondition::GreaterThan          => row_value.is_greater_than(&target_value),
@@ -526,6 +541,22 @@ impl Table {
                 FilterCondition::False                => Ok( row_value.eq( &FieldValue::Boolean(false) )),
                 FilterCondition::Null                 => Ok( row_value.eq(&FieldValue::Null)),
                 FilterCondition::NotNull              => Ok(!row_value.eq(&FieldValue::Null)),
+                FilterCondition::NumberBetween => {
+                    // make sure the target value is a range so we can see if the cell value is in a range
+                    match target_value { 
+                        FieldValue::BetweenDates(_, _) => continue,
+                        // TODO: do I add a date_range as a datatype?
+                         _ => return Err(DBError::MisMatchDataType(DataType::Date, target_value.data_type())) 
+                    }
+                    // TODO: see if row_value is between values
+                },
+                FilterCondition::DateBetween => {
+                    match target_value {
+                        FieldValue::BetweenNumbers(_, _) => continue,
+                        _ => return Err(DBError::MisMatchDataType(DataType::Number, target_value.data_type()))
+                    }
+                    // TODO: see if row value is between values
+                },
             };
 
             if row_matches_search_critieria.is_err() {
@@ -616,6 +647,8 @@ impl Table {
             text_table.add_row(formatted_row);
         }
 
+        text_table.load_preset(ASCII_MARKDOWN).remove_style(comfy_table::TableComponent::HorizontalLines);
+        
         format!("\n{}", text_table.to_string())
     }
 }
@@ -643,7 +676,11 @@ impl Table {
         if r.is_err() { return Err(DBError::DataBaseFileFailure(file_path)) }
         
         Ok(())
-    } 
+    }
+
+    // TODO:
+    pub fn to_excel(&self) -> Result<(), DBError> {todo!(); }
+    pub fn to_csv(&self)   -> Result<(), DBError> { todo!(); }
 }
 
 

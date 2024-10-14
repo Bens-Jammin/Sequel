@@ -1,7 +1,5 @@
 use core::fmt;
 
-
-/// TODO: add to parse_str() the ability to parse notlike, numberbetween, datebetween
 #[derive(Debug, Clone)]
 pub enum FilterCondition {
     LessThan,
@@ -13,16 +11,14 @@ pub enum FilterCondition {
     True,
     False,
     Null,
-    NotNull
+    NotNull,
 
-    // === UNABLE TO IMPLEMENT YET ===
-    //KeyIs(String),   
-    //KeyIsNot(String),
-    // an inclusive range between two floats
-    // NumberBetween(f64, f64),
-    // an inclusive range between two dates
-    // DateBetween(DateTime<Utc>, DateTime<Utc>),
+    /// an inclusive range between two 64 bit floats.
+    NumberBetween, 
     
+    /// an inclusive range between two dates.
+    DateBetween,
+
 }
 
 impl FilterCondition {
@@ -36,8 +32,10 @@ impl FilterCondition {
             "!=" => Some(FilterCondition::NotEqual),
             "true" => Some(FilterCondition::True),
             "false" => Some(FilterCondition::False),
+            "between dates" => Some(FilterCondition::DateBetween),
+            "between numbers" => Some(FilterCondition::NumberBetween),
+
             "not like" => None, 
-            "between" => None,
             _ => None,
         }
     }
@@ -57,7 +55,9 @@ impl fmt::Display for FilterCondition {
             FilterCondition::True                 => write!(f, "Is True"),
             FilterCondition::False                => write!(f, "Is False"),
             FilterCondition::Null                 => write!(f, "Null"),
-            &FilterCondition::NotNull             => write!(f, "Not Null"),
+            FilterCondition::NotNull              => write!(f, "Not Null"),
+            FilterCondition::DateBetween          => write!(f, "Between dates"), 
+            FilterCondition::NumberBetween        => write!(f, "Between numbers"), 
         }
     }
 }
