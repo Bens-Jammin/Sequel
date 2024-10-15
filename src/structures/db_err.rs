@@ -1,7 +1,7 @@
 use core::fmt;
 use std::error::Error;
 
-use super::{column::DataType, modify_where::FilterCondition};
+use super::{column::DataType, modify_where::{FilterCondition, FilterConditionValue}};
 
 
 
@@ -30,6 +30,9 @@ pub enum DBError {
 
     /// thrown when a function hasn't been implemented yet
     ActionNotImplemented(String),
+
+    /// first is expected, second is actual
+    MisMatchConditionDataType(FilterConditionValue, FilterConditionValue)
 }
 
 
@@ -56,7 +59,9 @@ impl fmt::Display for DBError {
             DBError::DataBaseFileFailure(file_path)
                 => write!(f, "There was an error involving the database path '{}'", file_path),
             DBError::ActionNotImplemented(func_name)
-                => write!(f, "the logic for the function '{func_name}' has not been implemented yet!")
+                => write!(f, "the logic for the function '{func_name}' has not been implemented yet!"),
+            DBError::MisMatchConditionDataType(expected, actual)
+                => write!(f, "expected condtion type '{}', got '{}' for a condition.", expected.name(), actual.name()),
         }
     }
 }

@@ -16,14 +16,14 @@ pub enum Query {
     /// EDIT (val1, val2, ..., valn) INTO (table) (col1, col2, ..., coln)
     EDIT(Vec<String>, String, Vec<String>),
 
-    /// DELETE FROM (table) WHERE (column) (condition) (condition_value)
-    DELETE(String, String, FilterCondition, FieldValue),
+    /// DELETE FROM (table) WHERE (column) (condition)
+    DELETE(String, String, FilterCondition),
 
     /// SORT (table) ON (sort_condition) COLUMN (column)
     SORT(String, SortCondition, String),
 
-    /// FILTER FROM (table) WHERE (column) (condition) (condition_value)
-    FILTER(String, String, FilterCondition, FieldValue),
+    /// FILTER FROM (table) WHERE (column) (condition)
+    FILTER(String, String, FilterCondition),
 
     /// INDEX (table) (column)
     INDEX(String, String),
@@ -59,9 +59,9 @@ fn all_queries() -> Vec<Query> {
         Query::SELECT(cs.clone(), s.clone()),
         Query::INSERT(cs.clone(), s.clone(), cs.clone()),
         Query::EDIT(cs.clone(), s.clone(), cs.clone()),
-        Query::DELETE(s.clone(), s.clone(), fc, fv),
+        Query::DELETE(s.clone(), s.clone(), fc),
         Query::SORT(s.clone(), sc, s.clone()),
-        Query::FILTER(s.clone(), s.clone(), fc2, fv2),
+        Query::FILTER(s.clone(), s.clone(), fc2),
         Query::INDEX(s.clone(), s.clone()),
         Query::CREATE(s, cs.clone(), dts, cs)
     ]
@@ -76,12 +76,12 @@ impl fmt::Display for Query {
             => write!(f, "INSERT (val1, val2, ...) INTO {{table}} (col1, col2, ..."),
             Query::EDIT(_, _, _) 
             => write!(f, "EDIT (val1, val2, ..., valn) INTO {{table}} (col1, col2, ...)"),
-            Query::DELETE(_, _, _, _) 
-            => write!(f, "DELETE FROM {{table}} WHERE {{column}} {{condition}} {{condition_value}}"),
+            Query::DELETE(_, _, _) 
+            => write!(f, "DELETE FROM {{table}} WHERE {{column}} {{condition}}"),
             Query::SORT(_, _, _)
              => write!(f, "SORT {{table}} ON {{sort_condition}} COLUMN {{column}}"),
-            Query::FILTER(_, _, _, _)
-             => write!(f, "FILTER FROM {{table}} WHERE {{column}} {{condition}} {{condition_value}}"),
+            Query::FILTER(_, _, _)
+             => write!(f, "FILTER FROM {{table}} WHERE {{column}} {{condition}}"),
             Query::INDEX(_, _)
              => write!(f, "INDEX {{table}} {{column}}"),
             Query::CREATE(_, _, _, _)
@@ -178,7 +178,7 @@ pub fn parse_query(command: String) -> Option<Query> {
         }
     } else if main_query_command.starts_with("remove") {
 
-        // REMOVE FROM (table) WHERE (column) (condition) (field_value)
+        // REMOVE FROM (table) WHERE (column) (condition)
         if let (Some(from_index), Some(where_index)) = ( 
             parts.iter().position(|&s| s.to_lowercase() == "from"), 
             parts.iter().position(|&s| s.to_lowercase() == "where")
@@ -193,10 +193,9 @@ pub fn parse_query(command: String) -> Option<Query> {
             if let Some(cond) = condition {
                 // Parse FieldValue (e.g., 42, "string", etc.)
                 let field_value_str = String::from(parts[where_index + 3]);
-                let field_value = parse_into_field_value(&field_value_str);
 
                 // Return a valid DELETE query if all parts were successfully parsed
-                return Some(Query::DELETE(table, column, cond, field_value));
+                return Some(Query::DELETE(table, column, cond));
             }
         }
     } else if main_query_command.starts_with("sort") {
@@ -229,9 +228,8 @@ pub fn parse_query(command: String) -> Option<Query> {
             if let Some(cond) = condition {
                 // Parse FieldValue (e.g., 42, "string", etc.)
                 let field_value_str = String::from(parts[where_index + 3]);
-                let field_value = parse_into_field_value(&field_value_str);
 
-                return Some(Query::FILTER(table, column, cond, field_value));
+                return Some(Query::FILTER(table, column, cond));
             }
         }
     } else if main_query_command.starts_with("index") {
@@ -345,18 +343,18 @@ pub fn execute_query(query: Query, save_dir: &str) -> Result<Either<Table, Strin
             let _ = db.save(relation_directory);
             return Ok(Either::That(format!("Created table '{table}'")))
         },
-        Query::DELETE(table , column, filter_condition, field_value) => {
+        Query::DELETE(table , column, filter_condition) => {
             let file_path = format!("{}/db_{table}.bin", &relation_directory);
             let mut db = load_database(&file_path)?;
-            let number_of_rows_deleted = db.delete_rows(column, filter_condition, field_value)?;
+            let number_of_rows_deleted = db.delete_rows(column, filter_condition)?;
             let _ = db.save(relation_directory)?;
             return Ok(Either::That(format!("deleted {} row(s)", number_of_rows_deleted)));
         },
-        Query::FILTER(table , column, filter_condition, field_value) => {
+        Query::FILTER(table , column, filter_condition) => {
             let file_path = format!("{}/db_{table}.bin", &relation_directory);
             let mut db = load_database(&file_path)?;
 
-            let filtered_table = db.select_rows(&column, filter_condition, field_value)?; 
+            let filtered_table = db.select_rows(&column, filter_condition)?; 
             return Ok(Either::This(filtered_table))
         },
     }

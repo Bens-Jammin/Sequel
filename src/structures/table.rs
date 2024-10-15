@@ -7,7 +7,7 @@ use crate::{
     config::{self, INDEX_PATH}, 
     structures::{
         column::{Column, DataType, FieldValue}, 
-        db_err::DBError, modify_where::FilterCondition, 
+        db_err::DBError, modify_where::{FilterCondition, FilterConditionValue}, 
         sort_method::SortCondition
     }
 };
@@ -77,6 +77,7 @@ impl Table {
     pub fn is_valid_primary_key(&self, pk: String) -> bool { self.primary_key(pk).is_some() }
     
 
+    /// given a list of columns to be inserted, returns a list of primary key columns which are missing from the list
     pub fn missing_primary_keys(&self, cols: Vec<String> ) -> Vec<String> {
         
         let mut missing_keys: Vec<String> = Vec::new();
@@ -188,9 +189,9 @@ impl Table {
 
 
 
-    pub fn edit_rows(&mut self, column_name: String, search_criteria: FilterCondition, search_value: FieldValue, new_value: FieldValue) -> Result<u32, DBError>{
+    pub fn edit_rows(&mut self, column_name: String, search_criteria: FilterCondition, new_value: FieldValue) -> Result<u32, DBError>{
     
-        let filter_result: Result<Table, DBError> = self.select_rows(&column_name, search_criteria, search_value);
+        let filter_result: Result<Table, DBError> = self.select_rows(&column_name, search_criteria);
 
         match filter_result { Err(e) => return Err(e), Ok(_) => () };
         let rows_to_edit = filter_result.unwrap();
@@ -215,9 +216,9 @@ impl Table {
     /// uses the `Table::filter_rows()` function to determine which rows are to be deleted.
     /// 
     /// returns a u32 of the number of rows deleted if the function does not fail.
-    pub fn delete_rows(&mut self, column_name: String, search_criteria: FilterCondition, search_value: FieldValue ) -> Result<u32, DBError> {
+    pub fn delete_rows(&mut self, column_name: String, search_criteria: FilterCondition ) -> Result<u32, DBError> {
 
-        let filter_result: Result<Table, DBError> = self.select_rows(&column_name, search_criteria, search_value);
+        let filter_result: Result<Table, DBError> = self.select_rows(&column_name, search_criteria);
 
         match filter_result { Err(e) => return Err(e), Ok(_) => () };
         let rows_to_delete = filter_result.unwrap();    // safe to unwrap, if it was an err then the line above would early return
@@ -381,9 +382,9 @@ impl Table {
 
         let matching_rows = if false {
             let index = load_index(config::INDEX_PATH, &self.name, &column_name).unwrap();
-            self.search_with_index(index, search_criteria, value)?
+            self.search_with_index(index, search_criteria)?
         } else {
-            self.search_without_index(column_name, search_criteria, value)?
+            self.search_without_index(column_name, search_criteria)?
         };
 
         
@@ -398,8 +399,7 @@ impl Table {
 
 
     /// creates a completely new instance of table  with the filtered values
-    pub fn select_rows(&mut self, column_name: &String, search_criteria: FilterCondition, value: FieldValue) 
-    -> Result<Table, DBError> {
+    pub fn select_rows(&mut self, column_name: &String, search_criteria: FilterCondition) -> Result<Table, DBError> {
 
         // check if column actually exists
         if !self.is_valid_column( &column_name ) { 
@@ -407,14 +407,13 @@ impl Table {
         }
 
 
-        let matching_rows = if self.index_available(column_name, config::INDEX_PATH) {
+        let matching_rows = if false /* self.index_available(column_name, config::INDEX_PATH) */ {
             let index = load_index(config::INDEX_PATH, &self.name, &column_name).unwrap();
-            self.search_with_index(index, search_criteria, value)?
+            self.search_with_index(index, search_criteria)?
         } else {
-            self.search_without_index(column_name, search_criteria, value)?
+            self.search_without_index(column_name, search_criteria)?
         };
 
-        
         let mut filtered_table = Table::new(self.name.clone(), self.columns().clone());
 
         for r in matching_rows {
@@ -431,92 +430,13 @@ impl Table {
     }
 
 
-    fn search_with_index(&self, index: BTreeMap<FieldValue, Vec<u64>>, criteria: FilterCondition, value: FieldValue ) 
+    fn search_with_index(&self, index: BTreeMap<FieldValue, Vec<u64>>, criteria: FilterCondition) 
     -> Result<Vec<HashMap<String, FieldValue>>, DBError> {
-
-        fn get_from_one_key(rows: &Vec<HashMap<String, FieldValue>>, index: BTreeMap<FieldValue, Vec<u64>>, key: FieldValue)
-        -> Vec<HashMap<String, FieldValue>> {
-            let mut valid_rows: Vec<HashMap<String, FieldValue>> = Vec::new();
-             if let Some(row_indices) = index.get(&key) {
-                for &row_index in row_indices {
-                    if let Some(row) = rows.get(row_index as usize) {
-                        valid_rows.push(row.clone());
-                    }
-                }
-            }
-            valid_rows
-        }
-
-        fn get_all_but_key(rows: &Vec<HashMap<String, FieldValue>>, index: BTreeMap<FieldValue, Vec<u64>>, key: FieldValue)
-        -> Vec<HashMap<String, FieldValue>> {
-            let mut valid_rows: Vec<HashMap<String, FieldValue>> = Vec::new();
-
-            if let Some(row_indices_to_avoid) = index.get(&key) {
-                for (idx, row) in rows.iter().enumerate() {
-                    if row_indices_to_avoid.contains(&(idx as u64)) { continue; }
-                    valid_rows.push( row.clone() );
-                }
-            }
-            valid_rows
-        }
- 
-
-
-        let mut matching_rows: Vec<HashMap<String, FieldValue>> = Vec::new();
-
-        match criteria {
-            FilterCondition::LessThan => {
-                for (_, row_indices) in index.range(..value) {
-                    for &row_index in row_indices {
-                        if let Some(row) = self.rows.get(row_index as usize) {
-                            matching_rows.push(row.clone());
-                        }
-                    }
-                }
-            },
-            FilterCondition::LessThanOrEqualTo => {
-                for (_, row_indices) in index.range(..=value) {
-                    for &row_index in row_indices {
-                        if let Some(row) = self.rows.get(row_index as usize) {
-                            matching_rows.push(row.clone());
-                        }
-                    }
-                }
-            },
-            FilterCondition::GreaterThan => {
-                for (_, row_indices) in index.range(value..) {
-                    for &row_index in row_indices {
-                        if let Some(row) = self.rows.get(row_index as usize) {
-                            matching_rows.push(row.clone());
-                        }
-                    }
-                }
-            },
-            FilterCondition::GreaterThanOrEqualTo => {
-                 for (_, row_indices) in index.range(value..) {
-                    for &row_index in row_indices {
-                        if let Some(row) = self.rows.get(row_index as usize) {
-                            matching_rows.push(row.clone());
-                        }
-                    }
-                }
-            },
-            FilterCondition::Equal    => { matching_rows.extend(get_from_one_key(self.rows(), index, value)) },
-            FilterCondition::NotEqual => { matching_rows.extend( get_all_but_key(self.rows(), index, value)) },
-            FilterCondition::True     => { matching_rows.extend(get_from_one_key(self.rows(), index, FieldValue::Boolean(true)))  },
-            FilterCondition::False    => { matching_rows.extend(get_from_one_key(self.rows(), index, FieldValue::Boolean(false))) },
-            FilterCondition::Null     => { matching_rows.extend(get_from_one_key(self.rows(), index, FieldValue::Null)) },
-            FilterCondition::NotNull  => { matching_rows.extend( get_all_but_key(self.rows(), index, FieldValue::Null)) },
-            // TODO: complete this:
-            FilterCondition::NumberBetween => todo!(),
-            FilterCondition::DateBetween => todo!(),
-        }
-
-        Err(DBError::ActionNotImplemented("searching for rows with an index".to_string()))
+        Err( DBError::ActionNotImplemented("searching the relation with an index".to_string()))
     }
 
 
-    fn search_without_index(&self, column_name: &String, criteria: FilterCondition, target_value: FieldValue) 
+    fn search_without_index(&self, column_name: &String, criteria: FilterCondition) 
     -> Result<Vec<HashMap<String, FieldValue>>, DBError> {
 
         let mut matching_rows: Vec<HashMap<String, FieldValue>> = Vec::new(); 
@@ -530,33 +450,76 @@ impl Table {
             let row_copy: HashMap<String, FieldValue> = row.clone();
 
             // criteria validation
-            let row_matches_search_critieria = match criteria {
-                FilterCondition::LessThan             => row_value.is_less_than(&target_value),
-                FilterCondition::LessThanOrEqualTo    => row_value.is_leq(&target_value),
-                FilterCondition::GreaterThan          => row_value.is_greater_than(&target_value),
-                FilterCondition::GreaterThanOrEqualTo => row_value.is_geq(&target_value),
-                FilterCondition::Equal                => Ok( row_value.eq(&target_value)),
-                FilterCondition::NotEqual             => Ok(!row_value.eq(&target_value)),
+            let row_matches_search_critieria = match &  criteria {
+                // check if the condition is a relational operator (i.e. >, >=, ==, !=, <, <=)
+                FilterCondition::LessThan(condition_value) => {
+                    match &condition_value {
+                        FilterConditionValue::Number(target_value) => {
+                            row_value.is_less_than(&FieldValue::Number(*target_value))
+                        },
+                        _ => return Err(DBError::MisMatchConditionDataType(FilterConditionValue::Number(0.0), condition_value.clone()))
+                }},
+                FilterCondition::LessThanOrEqualTo(condition_value) => {
+                    match &condition_value {
+                        FilterConditionValue::Number(target_value) => {
+                            row_value.is_leq(&FieldValue::Number(*target_value))
+                        },
+                        _ => return Err(DBError::MisMatchConditionDataType(FilterConditionValue::Number(0.0), condition_value.clone()))
+                }},
+                FilterCondition::GreaterThan(condition_value) => {
+                    match &condition_value {
+                        FilterConditionValue::Number(target_value) => {
+                            row_value.is_greater_than(&FieldValue::Number(*target_value))
+                        },
+                        _ => return Err(DBError::MisMatchConditionDataType(FilterConditionValue::Number(0.0), condition_value.clone()))
+                }},
+                FilterCondition::GreaterThanOrEqualTo(condition_value) => {
+                    match &condition_value {
+                        FilterConditionValue::Number(target_value) => {
+                            row_value.is_geq(&FieldValue::Number(*target_value))
+                        },
+                        _ => return Err(DBError::MisMatchConditionDataType(FilterConditionValue::Number(0.0), condition_value.clone()))
+                }},
+                FilterCondition::Equal(condition_value) => {
+                    match &condition_value {
+                        FilterConditionValue::Number(target_value) => {
+                            Ok(row_value.eq(&FieldValue::Number(*target_value)))
+                        },
+                        _ => return Err(DBError::MisMatchConditionDataType(FilterConditionValue::Number(0.0), condition_value.clone()))
+                }},
+                FilterCondition::NotEqual(condition_value) => {
+                    match &condition_value {
+                        FilterConditionValue::Number(target_value) => {
+                            Ok(!row_value.eq(&FieldValue::Number(*target_value)))
+                        },
+                        _ => return Err(DBError::MisMatchConditionDataType(FilterConditionValue::Number(0.0), condition_value.clone()))
+                }},
+                FilterCondition::NumberBetween(condition_value) => {
+                    // make sure the target value is a range so we can see if the cell value is in a range
+                    match &condition_value { 
+                        FilterConditionValue::NumberRange(lower_bound, upper_bound) => {
+                            Ok(FieldValue::Number(*lower_bound).is_less_than(row_value)? && FieldValue::Number(*upper_bound).is_greater_than(row_value)?)
+                        },
+                         _ => return Err(DBError::MisMatchConditionDataType(
+                            FilterConditionValue::DateRange(DateTime::default(), DateTime::default()), condition_value.clone()
+                        )) 
+                    }
+                },
+                FilterCondition::DateBetween(condition_value) => {
+                    // make sure the target value is a range so we can see if the cell value is in a range
+                    match &condition_value { 
+                        FilterConditionValue::DateRange(lower_bound, upper_bound) => {
+                            Ok(FieldValue::Date(*lower_bound).is_less_than(row_value)? && FieldValue::Date(*upper_bound).is_greater_than(row_value)?)
+                        },
+                         _ => return Err(DBError::MisMatchConditionDataType(
+                            FilterConditionValue::NumberRange(0.0, 0.0), condition_value.clone()
+                        )) 
+                    }
+                },
                 FilterCondition::True                 => Ok( row_value.eq( &FieldValue::Boolean(true)  )),
                 FilterCondition::False                => Ok( row_value.eq( &FieldValue::Boolean(false) )),
                 FilterCondition::Null                 => Ok( row_value.eq(&FieldValue::Null)),
                 FilterCondition::NotNull              => Ok(!row_value.eq(&FieldValue::Null)),
-                FilterCondition::NumberBetween => {
-                    // make sure the target value is a range so we can see if the cell value is in a range
-                    match target_value { 
-                        FieldValue::BetweenDates(_, _) => continue,
-                        // TODO: do I add a date_range as a datatype?
-                         _ => return Err(DBError::MisMatchDataType(DataType::Date, target_value.data_type())) 
-                    }
-                    // TODO: see if row_value is between values
-                },
-                FilterCondition::DateBetween => {
-                    match target_value {
-                        FieldValue::BetweenNumbers(_, _) => continue,
-                        _ => return Err(DBError::MisMatchDataType(DataType::Number, target_value.data_type()))
-                    }
-                    // TODO: see if row value is between values
-                },
             };
 
             if row_matches_search_critieria.is_err() {

@@ -1,63 +1,129 @@
 use core::fmt;
 
+use chrono::{DateTime, Utc};
+
+#[derive(Debug, Clone)]
+pub enum FilterConditionValue {
+    String(String),
+    Number(f64),
+    Date(DateTime<Utc>),
+    
+    /// ## Note:
+    /// inclusive range
+    NumberRange(f64, f64),
+
+    /// ## Note:
+    /// inclusive range
+    DateRange(DateTime<Utc>, DateTime<Utc>),
+}
+
+impl FilterConditionValue {
+    pub fn name(&self) -> String {
+        match self {
+            FilterConditionValue::String(_) => String::from("String"),
+            FilterConditionValue::Number(_) => String::from("Number"),
+            FilterConditionValue::Date(_) => String::from("Date"),
+            FilterConditionValue::NumberRange(_, _) => String::from("Number range"),
+            FilterConditionValue::DateRange(_, _) => String::from("Date range"),
+        }
+    }
+}
+
+
 #[derive(Debug, Clone)]
 pub enum FilterCondition {
-    LessThan,
-    LessThanOrEqualTo,
-    GreaterThan,
-    GreaterThanOrEqualTo,
-    Equal,
-    NotEqual,
+    LessThan(FilterConditionValue),
+    LessThanOrEqualTo(FilterConditionValue),
+    GreaterThan(FilterConditionValue),
+    GreaterThanOrEqualTo(FilterConditionValue),
+    Equal(FilterConditionValue),
+    NotEqual(FilterConditionValue),
     True,
     False,
     Null,
     NotNull,
 
     /// an inclusive range between two 64 bit floats.
-    NumberBetween, 
+    NumberBetween(FilterConditionValue), 
     
     /// an inclusive range between two dates.
-    DateBetween,
+    DateBetween(FilterConditionValue),
 
 }
 
 impl FilterCondition {
     pub fn parse_str(input: &str) -> Option<FilterCondition> {
+        
+        let condition_components: Vec<String> = input.trim().to_lowercase().split_whitespace().map(|s| str::to_string(s)).collect();
+        
+        let valid_relational_operators = vec!["<", "<=", "=", "!=", ">=", ">"];
+
+        if valid_relational_operators.contains(&condition_components[0].as_str()) {
+            let condition_value = condition_components[1].parse::<f64>().unwrap();
+
+            match condition_components[0].as_str() {
+                "<=" => return Some(FilterCondition::LessThanOrEqualTo(FilterConditionValue::Number(condition_value))),
+                "<  " => return Some(FilterCondition::LessThan(FilterConditionValue::Number(condition_value))),
+                "=" => return Some(FilterCondition::Equal(FilterConditionValue::Number(condition_value))),
+                "!=" => return Some(FilterCondition::NotEqual(FilterConditionValue::Number(condition_value))),
+                ">" => return Some(FilterCondition::GreaterThan(FilterConditionValue::Number(condition_value))),
+                ">=" => return Some(FilterCondition::GreaterThanOrEqualTo(FilterConditionValue::Number(condition_value))),
+                _ => ()
+            }
+        }
+        
+        if condition_components[0] == "between" {
+            match condition_components[1].as_str() {
+                "dates" => {
+                    let lower_bound = condition_components[2].parse::<DateTime<Utc>>().unwrap();
+                    let upper_bound = condition_components[3].parse::<DateTime<Utc>>().unwrap();
+                    return Some(FilterCondition::DateBetween(FilterConditionValue::DateRange(lower_bound, upper_bound)))
+                }
+                "numbers" => {
+                    let lower_bound = condition_components[2].parse::<f64>().unwrap();
+                    let upper_bound = condition_components[3].parse::<f64>().unwrap();
+                    return Some( FilterCondition::NumberBetween(FilterConditionValue::NumberRange(lower_bound, upper_bound)))
+                }
+                _ => (),
+            }
+        }
+
         match input.trim().to_lowercase().as_str() {
-            "<" => Some(FilterCondition::LessThan),
-            "<=" => Some(FilterCondition::LessThanOrEqualTo),
-            ">" => Some(FilterCondition::GreaterThan),
-            ">=" => Some(FilterCondition::GreaterThanOrEqualTo),
-            "=" => Some(FilterCondition::Equal),
-            "!=" => Some(FilterCondition::NotEqual),
             "true" => Some(FilterCondition::True),
             "false" => Some(FilterCondition::False),
-            "between dates" => Some(FilterCondition::DateBetween),
-            "between numbers" => Some(FilterCondition::NumberBetween),
-
-            "not like" => None, 
             _ => None,
         }
     }
 }
 
 
+impl fmt::Display for FilterConditionValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FilterConditionValue::String(v) => write!(f, "{v}") ,
+            FilterConditionValue::Number(v) => write!(f, "{v}") ,
+            FilterConditionValue::Date(v) => write!(f, "{v}") ,
+            FilterConditionValue::NumberRange(lb, ub) => write!(f, "[{lb}, {ub}]"),
+            FilterConditionValue::DateRange(lb, ub) => write!(f, "[{lb}, {ub}]"),
+        }
+    }
+}
 
 impl fmt::Display for FilterCondition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FilterCondition::LessThan             => write!(f, "<"),
-            FilterCondition::LessThanOrEqualTo    => write!(f, "<="),
-            FilterCondition::GreaterThan          => write!(f, ">"),
-            FilterCondition::GreaterThanOrEqualTo => write!(f, ">="),
-            FilterCondition::Equal                => write!(f, "="),
-            FilterCondition::NotEqual             => write!(f, "!="),
-            FilterCondition::True                 => write!(f, "Is True"),
-            FilterCondition::False                => write!(f, "Is False"),
-            FilterCondition::Null                 => write!(f, "Null"),
-            FilterCondition::NotNull              => write!(f, "Not Null"),
-            FilterCondition::DateBetween          => write!(f, "Between dates"), 
-            FilterCondition::NumberBetween        => write!(f, "Between numbers"), 
+            FilterCondition::True                   => write!(f, "Is True"),
+            FilterCondition::False                  => write!(f, "Is False"),
+            FilterCondition::Null                   => write!(f, "is Null"),
+            FilterCondition::NotNull                => write!(f, "is Not Null"),
+            FilterCondition::LessThan(v)             => write!(f, "< {v}"),
+            FilterCondition::LessThanOrEqualTo(v)    => write!(f, "<= {v}"),
+            FilterCondition::GreaterThan(v)          => write!(f, "> {v}"),
+            FilterCondition::GreaterThanOrEqualTo(v) => write!(f, ">= {v}"),
+            FilterCondition::Equal(v)                => write!(f, "= {v}"),
+            FilterCondition::NotEqual(v)             => write!(f, "!= {v}"),
+            FilterCondition::DateBetween(v)          => write!(f, "In the inclusive range {v}"), 
+            FilterCondition::NumberBetween(v)        => write!(f, "In the inclusive range {v}"), 
         }
     }
 }

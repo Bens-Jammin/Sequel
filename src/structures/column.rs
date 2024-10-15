@@ -43,35 +43,8 @@ pub enum FieldValue {
     Date(DateTime<Utc>),
     Url(String),
     Boolean(bool),
-    BetweenNumbers(f64, f64),
-    BetweenDates(DateTime<Utc>, DateTime<Utc>),
     Null
 }
-
-// TODO: test new range fieldvalues
-// TODO: move field value, datatype into their own files?
-fn compare_date_ranges(
-        range_start_1: &DateTime<Utc>, range_end_1: &DateTime<Utc>, 
-        range_start_2: &DateTime<Utc>, range_end_2: &DateTime<Utc>
-    ) -> Ordering {
-
-    if range_start_1 <= range_start_2 && range_start_2 <= range_end_1 { return Ordering::Less; }
-    if range_start_2 <= range_start_1 && range_start_1 <= range_end_2 { return Ordering::Greater; }
-    if range_start_1 <= range_end_2 && range_end_2 <= range_end_1 { return Ordering::Greater; }
-    if range_start_2 <= range_end_1 && range_end_1 <= range_end_2 { return Ordering::Less; }
-    else { return Ordering::Equal }
-}
-
-fn compare_number_ranges( range_start_1: &f64, range_end_1: &f64,  range_start_2: &f64, range_end_2: &f64) 
--> Ordering {
-
-    if range_start_1 <= range_start_2 && range_start_2 <= range_end_1 { return Ordering::Less; }
-    if range_start_2 <= range_start_1 && range_start_1 <= range_end_2 { return Ordering::Greater; }
-    if range_start_1 <= range_end_2 && range_end_2 <= range_end_1 { return Ordering::Greater; }
-    if range_start_2 <= range_end_1 && range_end_1 <= range_end_2 { return Ordering::Less; }
-    else { return Ordering::Equal }
-}
-
 
 
 impl PartialOrd for FieldValue {
@@ -82,16 +55,6 @@ impl PartialOrd for FieldValue {
             (FieldValue::Date(d1), FieldValue::Date(d2)) => Some(d1.cmp(d2)),
             (FieldValue::Url(u1), FieldValue::Url(u2)) => Some(u1.cmp(u2)),
             (FieldValue::Boolean(b1), FieldValue::Boolean(b2)) => Some(b1.cmp(b2)),
-            (
-                FieldValue::BetweenDates(ld1, ud1 ),
-                FieldValue::BetweenDates(ld2, ud2 )
-            ) => Some( compare_date_ranges(ld1, ud1, ld2, ud2) ),
-
-            (
-                FieldValue::BetweenNumbers(lv1, uv1 ),
-                FieldValue::BetweenNumbers(lv2, uv2 )
-            ) => Some( compare_number_ranges(lv1, uv1, lv2, uv2) ),
-
             _ => None
         }
     }
@@ -228,6 +191,7 @@ impl FieldValue {
     pub fn is_less_than(&self, other: &FieldValue) -> Result<bool, DBError> {
         match (self, other) {
             ( FieldValue::Number(v1), FieldValue::Number(v2) ) => Ok(v1 < v2),
+            ( FieldValue::Date(v1), FieldValue::Date(v2)) => Ok(v1 < v2),
             _ => {
                 if self.data_type().eq(&DataType::Number) {
                     return Err(DBError::MisMatchDataType(DataType::Number, other.data_type()));
@@ -265,11 +229,12 @@ impl FieldValue {
     /// 
     /// ## IMPORTANT NOTE: 
     /// **DOES NOT RETURN AN ERROR IF THE WRONG DATATYPE IS PUT IN**
-    /// 
+    
     /// make the check for yourself!  
     pub fn is_greater_than(&self, other: &FieldValue) -> Result<bool, DBError> {
         match (self, other) {
             ( FieldValue::Number(v1), FieldValue::Number(v2) ) => Ok(v1 > v2),
+            ( FieldValue::Date(v1), FieldValue::Date(v2)) => Ok(v1 > v2),
             _ => {
                 if self.data_type().eq(&DataType::Number) {
                     return Err(DBError::MisMatchDataType(DataType::Number, other.data_type()));
@@ -340,8 +305,6 @@ impl FieldValue {
             FieldValue::Date(_) =>    DataType::Date,
             FieldValue::Url(_) =>     DataType::Url,
             FieldValue::Boolean(_) => DataType::Boolean,
-            FieldValue::BetweenDates(_, _) => DataType::Date,
-            FieldValue::BetweenNumbers(_, _) => DataType::Number,
             FieldValue::Null =>       DataType::Number,
         }
     }
@@ -406,8 +369,6 @@ impl fmt::Display for FieldValue {
             FieldValue::Date(v)    => write!(f, "{v}"),
             FieldValue::Url(v)     => write!(f, "{v}"),
             FieldValue::Boolean(v) => write!(f, "{v}"),
-            FieldValue::BetweenDates(lb, ub ) => write!(f, "inclusive range [{}, {}]", lb, ub),
-            FieldValue::BetweenNumbers(lb, ub) => write!(f, "inclusive range [{}, {}]", lb, ub),  
             FieldValue::Null       => write!(f, "Null")
         }
     }
@@ -448,12 +409,6 @@ impl PartialEq for FieldValue {
             (Self::Date(l0), Self::Date(r0)) => l0 == r0,
             (Self::Url(l0), Self::Url(r0)) => l0 == r0,
             (Self::Boolean(l0), Self::Boolean(r0)) => l0 == r0,
-            (Self::BetweenDates(lb1, ub1), Self::BetweenDates(lb2, ub2)) => {
-                lb1 == lb2 && ub1 == ub2
-            }, 
-            (Self::BetweenNumbers(lb1, ub1), Self::BetweenNumbers(lb2, ub2 )) => {
-                lb1 == lb2 && ub1 == ub2
-            }
             _ => false,
         }
     }
