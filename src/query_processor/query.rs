@@ -1,8 +1,22 @@
 use core::fmt;
 use std::collections::HashMap;
-use crate::structures::{
-    self, column::{parse_into_field_value, parse_str, Column, DataType, FieldValue}, db_err::DBError, modify_where::FilterCondition, sort_method::SortCondition, table::{self, load_database, Table}
-};
+use crate::{config, structures::{
+    self, 
+    column::{
+        parse_into_field_value, 
+        parse_str, 
+        Column, 
+        DataType, 
+        FieldValue
+    }, 
+    db_err::DBError, 
+    modify_where::FilterCondition, 
+    sort_method::SortCondition, 
+    table::{
+        load_database, 
+        Table
+    }
+}};
 
 
 #[derive(Debug)]
@@ -50,10 +64,7 @@ fn all_queries() -> Vec<Query> {
     let dts = vec![DataType::Number];
     let sc = SortCondition::AlphaAscending;
     let fc = FilterCondition::Null;
-    let fv = FieldValue::Null;
     let fc2 = FilterCondition::Null;
-    let fv2 = FieldValue::Null;
-
 
     vec![
         Query::SELECT(cs.clone(), s.clone()),
@@ -187,13 +198,10 @@ pub fn parse_query(command: String) -> Option<Query> {
             let column = parts[where_index + 1].trim_matches(|c| c == '(' || c == ')').to_string();
 
             // Parse FilterCondition (e.g., LessThan, GreaterThan, etc.)
-            let condition_str = parts[where_index + 2];
-            let condition = FilterCondition::parse_str(condition_str);
-
+            let condition_str: String = parts[where_index + 2..].iter().map(|s| format!("{}", s)).collect();
+            let condition = FilterCondition::parse_str(&condition_str);
+            
             if let Some(cond) = condition {
-                // Parse FieldValue (e.g., 42, "string", etc.)
-                let field_value_str = String::from(parts[where_index + 3]);
-
                 // Return a valid DELETE query if all parts were successfully parsed
                 return Some(Query::DELETE(table, column, cond));
             }
@@ -222,13 +230,10 @@ pub fn parse_query(command: String) -> Option<Query> {
             let column = parts[where_index + 1].trim_matches(|c| c == '(' || c == ')').to_string();
 
             // Parse FilterCondition (e.g., LessThan, GreaterThan, etc.)
-            let condition_str = parts[where_index + 2];
-            let condition = FilterCondition::parse_str(condition_str);
+            let condition_str: String = parts[where_index + 2..].iter().map(|s| format!("{} ", s)).collect();
+            let condition = FilterCondition::parse_str(&condition_str);
 
             if let Some(cond) = condition {
-                // Parse FieldValue (e.g., 42, "string", etc.)
-                let field_value_str = String::from(parts[where_index + 3]);
-
                 return Some(Query::FILTER(table, column, cond));
             }
         }
@@ -276,10 +281,10 @@ pub fn parse_query(command: String) -> Option<Query> {
 
 /// # NOTE 
 /// local path must be where **ALL** files will be stored. Both relations **AND** indexes
-pub fn execute_query(query: Query, save_dir: &str) -> Result<Either<Table, String>, DBError>{
+pub fn execute_query(query: Query) -> Result<Either<Table, String>, DBError>{
 
-    let relation_directory = format!("{}/relations", save_dir);
-    let index_directory = format!("{}/indexes", save_dir);
+    let relation_directory = config::RELATION_PATH.to_owned();
+    let _index_directory = config::INDEX_PATH.to_owned();
 
     match query {
         Query::SELECT(col_names, table) => {
@@ -306,8 +311,8 @@ pub fn execute_query(query: Query, save_dir: &str) -> Result<Either<Table, Strin
 
             return Ok(Either::This(db))
         },
-        Query::EDIT(new_vals, table, col_names) => {
-            let file_path = format!("{}/db_{table}.bin", &relation_directory);
+        Query::EDIT(_new_vals, table, _col_names) => {
+            let _file_path = format!("{}/db_{table}.bin", &relation_directory);
             // let mut db = structures::table::load_database(&file_path)?;
             
             // let r = db.edit_rows()

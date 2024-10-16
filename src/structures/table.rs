@@ -130,10 +130,7 @@ impl Table {
 
     
     fn update_index(&self, column_name: &str) -> Result<(), DBError> {
-        
-        let index_path = index_file_name(&self.name, column_name);
-        
-        Ok(())
+        Err(DBError::ActionNotImplemented("Index Updating".to_string()))
     } 
 
     /// inserts a new row into the database.
@@ -149,18 +146,18 @@ impl Table {
         // TODO: inserting **ONE ROW** takes O(n) !! FIX ASAP
         // implement a B+ tree to help fix it
         // make sure the primary key isnt already in the db
-        // for pk in self.primary_keys() {
-        //     let pk_name = pk.get_name();
-        //     let row_pk = row_data.get(pk_name).unwrap();
+        for pk in self.primary_keys() {
+            let pk_name = pk.get_name();
+            let row_pk = row_data.get(pk_name).unwrap();
 
-        //     for existing_row in &self.rows {
-        //         let existing_row_pk = existing_row.get(pk_name).unwrap();
+            for existing_row in &self.rows {
+                let existing_row_pk = existing_row.get(pk_name).unwrap();
 
-        //         if row_pk.eq(existing_row_pk) { 
-        //             return Err(DBError::DuplicatePrimaryKey(pk_name.to_string()))
-        //         }
-        //     }
-        // }
+                if row_pk.eq(existing_row_pk) { 
+                    return Err(DBError::DuplicatePrimaryKey(pk_name.to_string()))
+                }
+            }
+        }
 
 
 
@@ -371,7 +368,7 @@ impl Table {
 
     /// # NOTE: 
     /// used for testing index speed ONLY!!
-    pub fn scan(&mut self, column_name: &String, search_criteria: FilterCondition, value: FieldValue)
+    pub fn scan(&mut self, column_name: &String, search_criteria: FilterCondition)
     -> Result<Table, DBError> {
 
         // check if column actually exists
@@ -645,7 +642,9 @@ impl Table {
     pub fn to_excel(&self) -> Result<(), DBError> {todo!(); }
     pub fn to_csv(&self)   -> Result<(), DBError> { todo!(); }
 }
-
+// TODO: save / load files using capitalized names
+// TODO: make a function that turns the table into its saved name
+// TODO: make a function that given a string, returns a **POSSIBLE** table name (i.e. enter "test_db", return "TEST_DB" because of the above function) 
 
 
 /// loads a database given a filepath. File must be a binary file (extension .bin)

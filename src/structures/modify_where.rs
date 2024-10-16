@@ -1,6 +1,6 @@
 use core::fmt;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 
 #[derive(Debug, Clone)]
 pub enum FilterConditionValue {
@@ -52,18 +52,25 @@ pub enum FilterCondition {
 }
 
 impl FilterCondition {
+    // TODO: FIX THIS ASAP !! NEEDS TO INCLUDE FILTER VALUES
     pub fn parse_str(input: &str) -> Option<FilterCondition> {
         
-        let condition_components: Vec<String> = input.trim().to_lowercase().split_whitespace().map(|s| str::to_string(s)).collect();
+        let condition_components: Vec<String> = input
+            .trim()
+            .to_lowercase()
+            .split_whitespace()
+            .map(|s| str::to_string(s))
+            .collect();
         
         let valid_relational_operators = vec!["<", "<=", "=", "!=", ">=", ">"];
 
         if valid_relational_operators.contains(&condition_components[0].as_str()) {
-            let condition_value = condition_components[1].parse::<f64>().unwrap();
+            let condition_value = condition_components[1].parse::<f64>().unwrap_or(-1.0);
 
-            match condition_components[0].as_str() {
+            // TODO: eventually add relational operators for dates?
+            match condition_components[0].trim() {
                 "<=" => return Some(FilterCondition::LessThanOrEqualTo(FilterConditionValue::Number(condition_value))),
-                "<  " => return Some(FilterCondition::LessThan(FilterConditionValue::Number(condition_value))),
+                "<" => return Some(FilterCondition::LessThan(FilterConditionValue::Number(condition_value))),
                 "=" => return Some(FilterCondition::Equal(FilterConditionValue::Number(condition_value))),
                 "!=" => return Some(FilterCondition::NotEqual(FilterConditionValue::Number(condition_value))),
                 ">" => return Some(FilterCondition::GreaterThan(FilterConditionValue::Number(condition_value))),
@@ -75,13 +82,13 @@ impl FilterCondition {
         if condition_components[0] == "between" {
             match condition_components[1].as_str() {
                 "dates" => {
-                    let lower_bound = condition_components[2].parse::<DateTime<Utc>>().unwrap();
-                    let upper_bound = condition_components[3].parse::<DateTime<Utc>>().unwrap();
+                    let lower_bound = parse_into_date(&condition_components[2]).unwrap();
+                    let upper_bound = parse_into_date(&condition_components[3]).unwrap();
                     return Some(FilterCondition::DateBetween(FilterConditionValue::DateRange(lower_bound, upper_bound)))
                 }
                 "numbers" => {
-                    let lower_bound = condition_components[2].parse::<f64>().unwrap();
-                    let upper_bound = condition_components[3].parse::<f64>().unwrap();
+                    let lower_bound = condition_components[1].parse::<f64>().unwrap();
+                    let upper_bound = condition_components[2].parse::<f64>().unwrap();
                     return Some( FilterCondition::NumberBetween(FilterConditionValue::NumberRange(lower_bound, upper_bound)))
                 }
                 _ => (),
@@ -94,6 +101,25 @@ impl FilterCondition {
             _ => None,
         }
     }
+}
+
+
+fn parse_into_date(str: &str) -> Option<DateTime<Utc>> {
+
+    let separator = if str.contains("-") {"-"} else {"/"};
+    
+    let date_format = format!("%Y{}%m{}%d", separator, separator);
+
+    // check if a timestamp is included or not
+    if str.contains(":") {
+        let datetime_format = format!("{} %H:%M:%S", date_format);
+        let datetime = DateTime::parse_from_str(str, &datetime_format).unwrap();
+        let r = datetime.with_timezone(&Utc);
+        return Some(r);
+    }
+    // assume timestamp is 0:00:00
+    let date: NaiveDate = NaiveDate::parse_from_str(str, &date_format).unwrap();
+    Some(date.and_time(NaiveTime::default()).and_utc())
 }
 
 

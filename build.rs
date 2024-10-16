@@ -2,7 +2,7 @@
 use std::{env, fs};
 use std::fs::File;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 fn main() {
     // find user/appdata
