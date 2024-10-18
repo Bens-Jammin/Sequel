@@ -10,8 +10,8 @@ use crate::{config, structures::{
         FieldValue
     }, 
     db_err::DBError, 
-    modify_where::FilterCondition, 
-    sort_method::SortCondition, 
+    filter::FilterCondition, 
+    sort::SortCondition, 
     table::{
         load_database, 
         Table
@@ -306,7 +306,7 @@ pub fn execute_query(query: Query) -> Result<Either<Table, String>, DBError>{
                 row.insert(col_name.to_owned(), datatype);
             }
 
-            db.insert_row(row)?;
+            db.insert_row(&row)?;
             db.save(relation_directory)?;
 
             return Ok(Either::This(db))
@@ -360,7 +360,8 @@ pub fn execute_query(query: Query) -> Result<Either<Table, String>, DBError>{
             let mut db = load_database(&file_path)?;
 
             let filtered_table = db.select_rows(&column, filter_condition)?; 
-            return Ok(Either::This(filtered_table))
+            return Err(DBError::ActionNotImplemented("Filter Queries".to_owned()))
+            // return Ok(Either::This(filtered_table))
         },
     }
 

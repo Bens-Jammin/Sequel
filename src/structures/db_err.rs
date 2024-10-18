@@ -1,7 +1,7 @@
 use core::fmt;
 use std::error::Error;
 
-use super::{column::DataType, modify_where::{FilterCondition, FilterConditionValue}};
+use super::{column::DataType, filter::{FilterCondition, FilterConditionValue}};
 
 
 

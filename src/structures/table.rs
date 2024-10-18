@@ -7,8 +7,8 @@ use crate::{
     config::{self, INDEX_PATH}, 
     structures::{
         column::{Column, DataType, FieldValue}, 
-        db_err::DBError, modify_where::{FilterCondition, FilterConditionValue}, 
-        sort_method::SortCondition
+        db_err::DBError, filter::{FilterCondition, FilterConditionValue}, 
+        sort::SortCondition
     }
 };
 
@@ -23,8 +23,10 @@ pub struct Table {
 
 /// ====================================================================================
 /// TODO: 
-/// * (TOP PRIORITY) learn how to cache values (such as the index and relation paths)
-/// * (TOP PRIORITY) update b+ trees on update
+/// * (TOP PRIOTIRY) read 13.2.1 in DB textbook, learn to implement records ( ALSO STUDY FOR MIDTERM(S) )
+/// * (TOP PRIORITY) implement index for primary keys, update them on insertion
+/// * (LOW PRIORITY) learn how to cache values (such as the index and relation paths)
+/// * (MED PRIORITY) update b+ trees on update
 /// =====================================================================================
 
 
@@ -35,7 +37,9 @@ pub struct Table {
 impl Table {
     pub fn rows(&self) -> &Vec<HashMap<String, FieldValue>> { &self.rows }
 
-    pub fn get_row(&self, row_index: u64) -> Option<&HashMap<String, FieldValue>> { self.rows.get(row_index as usize) }
+    pub fn number_of_rows(&self) -> usize { self.rows.len() }
+
+    pub fn get_row(&self, row_index: usize) -> Option<&HashMap<String, FieldValue>> { self.rows.get(row_index) }
 
     pub fn columns(&self) -> &Vec<Column> { &self.columns }
 
@@ -89,6 +93,23 @@ impl Table {
         missing_keys
     }
 
+    /// gives the formatted name to be used as a file name
+    /// 
+    /// ## Example
+    /// let table = Table::new(...);
+    /// table.name() -> "Example Table Name"
+    /// table.to_file_name() -> "EXAMPLE_FILE_NAME"
+    pub fn to_file_name(&self) -> String {
+        let name = &self.name;
+        name.to_uppercase().replace(" ", "_")
+    }
+
+}
+
+
+/// converts a string into its file name counterpart. Used to help find a file for a possible relation
+pub fn format_for_file_name(str: &str) -> String {
+    str.to_uppercase().replace(" ", "_")
 }
 
 
@@ -134,7 +155,7 @@ impl Table {
     } 
 
     /// inserts a new row into the database.
-    pub fn insert_row(&mut self, row_data: HashMap<String, FieldValue> ) -> Result<(), DBError> {
+    pub fn insert_row(&mut self, row_data: &HashMap<String, FieldValue> ) -> Result<(), DBError> {
 
         // check if the row being inserted is inserting into primary columns
         let keys = row_data.clone().into_keys().collect();
@@ -146,23 +167,23 @@ impl Table {
         // TODO: inserting **ONE ROW** takes O(n) !! FIX ASAP
         // implement a B+ tree to help fix it
         // make sure the primary key isnt already in the db
-        for pk in self.primary_keys() {
-            let pk_name = pk.get_name();
-            let row_pk = row_data.get(pk_name).unwrap();
+        // for pk in self.primary_keys() {
+        //     let pk_name = pk.get_name();
+        //     let row_pk = row_data.get(pk_name).unwrap();
 
-            for existing_row in &self.rows {
-                let existing_row_pk = existing_row.get(pk_name).unwrap();
+        //     for existing_row in &self.rows {
+        //         let existing_row_pk = existing_row.get(pk_name).unwrap();
 
-                if row_pk.eq(existing_row_pk) { 
-                    return Err(DBError::DuplicatePrimaryKey(pk_name.to_string()))
-                }
-            }
-        }
+        //         if row_pk.eq(existing_row_pk) { 
+        //             return Err(DBError::DuplicatePrimaryKey(pk_name.to_string()))
+        //         }
+        //     }
+        // }
 
 
 
         // make sure the FieldValues for each column are correct
-        for (col_name, given_field_value) in &row_data {
+        for (col_name, given_field_value) in row_data {
             let col = self.column(col_name.to_string());
 
             // check to make sure the column actually exists in the database
@@ -179,7 +200,7 @@ impl Table {
         }
 
         // if there aren't any missing primary keys, push the hashmap and return unit
-        self.rows.push( row_data );
+        self.rows.push( row_data.clone() );
         Ok(())
 
     }
@@ -262,17 +283,18 @@ impl Table {
         if self.column(column_name.clone()).is_none() { return Err(DBError::InvalidColumn(column_name.clone())) }
 
 
-        let mut index: BTreeMap<FieldValue, Vec<u64>> = BTreeMap::new();
+        let mut index: BTreeMap<FieldValue, Vec<usize>> = BTreeMap::new();
 
         // Iterate over each row and build the index
         for (row_index, row) in self.rows().iter().enumerate() {
             // Get the value of the specified column in the current row
             if let Some(index_key) = row.get(&column_name) {
                 // Check if the key is already in the index
-                // If it exists, push the row index to the vector, otherwise insert a new vector with the row index
+                // If it exists, push the row index to the vector, 
+                // otherwise insert a new vector with the row index
                 index.entry(index_key.clone())
-                    .and_modify(|v| v.push(row_index as u64)) // Add to existing vector if key exists
-                    .or_insert_with(|| vec![row_index as u64]); // Insert new vector with the current row index
+                    .and_modify(|v| v.push(row_index)) // Add to existing vector if key exists
+                    .or_insert_with(|| vec![row_index]); // Insert new vector with the current row index
             }
 
         }
@@ -366,33 +388,6 @@ impl Table {
         Ok(())
     }
 
-    /// # NOTE: 
-    /// used for testing index speed ONLY!!
-    pub fn scan(&mut self, column_name: &String, search_criteria: FilterCondition)
-    -> Result<Table, DBError> {
-
-        // check if column actually exists
-        if !self.is_valid_column( &column_name ) { 
-            return Err(DBError::InvalidColumn(column_name.to_string()))
-        }
-
-
-        let matching_rows = if false {
-            let index = load_index(config::INDEX_PATH, &self.name, &column_name).unwrap();
-            self.search_with_index(index, search_criteria)?
-        } else {
-            self.search_without_index(column_name, search_criteria)?
-        };
-
-        
-        let mut filtered_table = Table::new(self.name.clone(), self.columns().clone());
-
-        for r in matching_rows {
-            filtered_table.insert_row(r)?
-        }
-
-        Ok( filtered_table )
-    }
 
 
     /// creates a completely new instance of table  with the filtered values
@@ -404,17 +399,19 @@ impl Table {
         }
 
 
-        let matching_rows = if false /* self.index_available(column_name, config::INDEX_PATH) */ {
+        let matching_rows = if self.index_available(column_name, config::INDEX_PATH) {
             let index = load_index(config::INDEX_PATH, &self.name, &column_name).unwrap();
+            println!("[DEBUG]: searching with an index on column {}", column_name);
             self.search_with_index(index, search_criteria)?
         } else {
+            println!("[DEBUG]: searching without an index");
             self.search_without_index(column_name, search_criteria)?
         };
 
         let mut filtered_table = Table::new(self.name.clone(), self.columns().clone());
 
         for r in matching_rows {
-            filtered_table.insert_row(r)?
+            filtered_table.insert_row( r )?
         }
 
         Ok( filtered_table )
@@ -426,25 +423,112 @@ impl Table {
         File::open(path).is_ok()
     }
 
+    fn search_with_index(&self, index: BTreeMap<FieldValue, Vec<usize>>, criteria: FilterCondition) 
+    -> Result<Vec<&HashMap<String, FieldValue>>, DBError> {
+        println!("[INDEX DEBUG]: beginning selection");
+        let eligible_row_indices: Vec<usize> = match criteria {
+            FilterCondition::LessThan(condition_value) => {
+                if condition_value.number().is_none() { 
+                    return Err(DBError::MisMatchConditionDataType(FilterConditionValue::Number(-1.0), condition_value));
+                } 
+                let search_value = FieldValue::Number(condition_value.number().unwrap());
+                index.range(..search_value)
+                    .flat_map(|(_, indices)| indices.clone())
+                    .collect()
+            },
+            FilterCondition::LessThanOrEqualTo(condition_value) => {
+                if condition_value.number().is_none() { 
+                    return Err(DBError::MisMatchConditionDataType(FilterConditionValue::Number(-1.0), condition_value));
+                }
+                let search_value = FieldValue::Number(condition_value.number().unwrap());
+                index.range(..=search_value)
+                    .flat_map(|(_, indices)| indices.clone())
+                    .collect()
+            },
+            FilterCondition::GreaterThan(condition_value) => {
+                if condition_value.number().is_none() { 
+                    return Err(DBError::MisMatchConditionDataType(FilterConditionValue::Number(-1.0), condition_value));
+                }
+                let search_value = FieldValue::Number(condition_value.number().unwrap() + 0.00000001);
+                index.range(search_value..)
+                    .flat_map(|(_, indices)| indices.clone())
+                    .collect()
+            },
+            FilterCondition::GreaterThanOrEqualTo(condition_value) => {
+                if condition_value.number().is_none() { 
+                    return Err(DBError::MisMatchConditionDataType(FilterConditionValue::Number(-1.0), condition_value));
+                }
+                let search_value = FieldValue::Number(condition_value.number().unwrap());
+                index.range(search_value..)
+                    .flat_map(|(_, indices)| indices.clone())
+                    .collect()
+            },
+            FilterCondition::Equal(condition_value) => {
+                if condition_value.number().is_none() { 
+                    return Err(DBError::MisMatchConditionDataType(FilterConditionValue::Number(-1.0), condition_value));
+                }
+                let search_value = FieldValue::Number(condition_value.number().unwrap());
+                match index.get(&search_value) {
+                    Some(indices) => indices.clone(),
+                    None => return Ok(Vec::new()),
+                }
+            },
+            FilterCondition::NotEqual(_) => return Err(DBError::ActionNotImplemented("Indexing on inequality".to_owned())),
+            FilterCondition::True => match index.get(&FieldValue::Boolean(true)) {
+                Some(indices) => indices.clone(),
+                None => Vec::new(),
+            },
+            FilterCondition::False => match index.get(&FieldValue::Boolean(false)) {
+                Some(indices) => indices.clone(),
+                None => Vec::new(),
+            },
+            FilterCondition::Null => match index.get(&FieldValue::Null) {
+                Some(indices) => indices.clone(),
+                None => Vec::new(),
+            },
+            FilterCondition::NotNull => return Err(DBError::ActionNotImplemented("Indexing on non-null values".to_owned())),
+            FilterCondition::NumberBetween(condition_value) => {
+                if condition_value.number_range().is_none() {
+                    return Err(DBError::MisMatchConditionDataType(FilterConditionValue::NumberRange(-1.0, -1.0), condition_value));
+                }
+                let (lower_bound, upper_bound) = condition_value.number_range().unwrap();
+                let lower_bound = FieldValue::Number(lower_bound);
+                let upper_bound = FieldValue::Number(upper_bound);
+                index.range(lower_bound..=upper_bound)
+                    .flat_map(|(_, indices)| indices.clone())
+                    .collect()
+            },
+            FilterCondition::DateBetween(condition_value) => {
+                if condition_value.date_range().is_none() {
+                    return Err(DBError::MisMatchConditionDataType(FilterConditionValue::DateRange(DateTime::default(), DateTime::default()), condition_value));
+                }
+                let (lower_bound, upper_bound) = condition_value.date_range().unwrap();
+                let lower_bound = FieldValue::Date(lower_bound);
+                let upper_bound = FieldValue::Date(upper_bound);
+                index.range(lower_bound..=upper_bound)
+                    .flat_map(|(_, indices)| indices.clone())
+                    .collect()
+            },
+        };
 
-    fn search_with_index(&self, index: BTreeMap<FieldValue, Vec<u64>>, criteria: FilterCondition) 
-    -> Result<Vec<HashMap<String, FieldValue>>, DBError> {
-        Err( DBError::ActionNotImplemented("searching the relation with an index".to_string()))
+        let mut rows: Vec<&HashMap<String, FieldValue>> = Vec::with_capacity( eligible_row_indices.len() );
+        let table_rows = self.rows();
+        for row_idx in eligible_row_indices {
+            rows.push( &table_rows[row_idx] );
+        }
+
+        Ok(rows)
     }
 
 
     fn search_without_index(&self, column_name: &String, criteria: FilterCondition) 
-    -> Result<Vec<HashMap<String, FieldValue>>, DBError> {
+    -> Result<Vec<&HashMap<String, FieldValue>>, DBError> {
 
-        let mut matching_rows: Vec<HashMap<String, FieldValue>> = Vec::new(); 
+        let mut matching_rows: Vec<&HashMap<String, FieldValue>> = Vec::new(); 
 
         // loop through all rows, and if the row matches given criteria, add it to `matching_rows`
         for row in &self.rows {
             let row_value = row.get(column_name).unwrap();
-
-            // a copy of the current row to be added to `matching_row` if
-            // the row matches the criteria
-            let row_copy: HashMap<String, FieldValue> = row.clone();
 
             // criteria validation
             let row_matches_search_critieria = match &  criteria {
@@ -524,7 +608,7 @@ impl Table {
             }
 
             if row_matches_search_critieria.ok().unwrap() {
-                matching_rows.push( row_copy )
+                matching_rows.push( row )
             }
 
         }
@@ -565,7 +649,7 @@ impl Table {
             for new_columns in column_names {
                 reduced_row.insert(new_columns.to_string(), current_row.get(new_columns).unwrap().clone() );
             }
-            let insertion_result = reduced_table.insert_row(reduced_row);
+            let insertion_result = reduced_table.insert_row(&reduced_row);
 
             match insertion_result {
                 Ok(_) => (),
@@ -617,8 +701,7 @@ impl Table {
 impl Table {
     pub fn save(&self, local_path: String) -> Result<(), DBError> {
 
-        let file_path = format!("{}/{}",local_path, relation_file_name(&self.name));
-
+        let file_path = format!("{}/{}",local_path, relation_file_name( &self.to_file_name() ));
         let encoded_data = bincode::serialize(&self);
         if encoded_data.is_err() { return Err(DBError::DataBaseFileFailure(file_path.to_owned())) }
         let encoded_data = encoded_data.unwrap();
@@ -631,20 +714,21 @@ impl Table {
 
         if file.is_err() { return Err(DBError::DataBaseFileFailure(file_path.to_owned())) }
         let mut file = file.unwrap();
-
+        
         let r = file.write_all(&encoded_data);
         if r.is_err() { return Err(DBError::DataBaseFileFailure(file_path)) }
         
+        println!("saved to '{}'", &file_path);
         Ok(())
     }
 
+
+    
     // TODO:
     pub fn to_excel(&self) -> Result<(), DBError> {todo!(); }
     pub fn to_csv(&self)   -> Result<(), DBError> { todo!(); }
 }
 // TODO: save / load files using capitalized names
-// TODO: make a function that turns the table into its saved name
-// TODO: make a function that given a string, returns a **POSSIBLE** table name (i.e. enter "test_db", return "TEST_DB" because of the above function) 
 
 
 /// loads a database given a filepath. File must be a binary file (extension .bin)
@@ -682,7 +766,7 @@ pub fn load_database(file_path: &str) -> Result<Table, DBError> {
 }
 
 
-pub fn save_index(save_dir: &str, table_name: &str, column_name: &str, tree: BTreeMap<FieldValue, Vec<u64>>) {
+pub fn save_index(save_dir: &str, table_name: &str, column_name: &str, tree: BTreeMap<FieldValue, Vec<usize>>) {
 
     let file_path: String = format!("{}/{}",save_dir, index_file_name(table_name, column_name));
     let encoded_data = bincode::serialize(&tree).unwrap();
@@ -691,7 +775,7 @@ pub fn save_index(save_dir: &str, table_name: &str, column_name: &str, tree: BTr
 }
 
 
-pub fn load_index(save_dir: &str, table_name: &str, column_name: &str) -> Option<BTreeMap<FieldValue, Vec<u64>>> {
+pub fn load_index(save_dir: &str, table_name: &str, column_name: &str) -> Option<BTreeMap<FieldValue, Vec<usize>>> {
     let file_path: String = format!("{}/{}", save_dir, index_file_name(table_name, column_name));
     let file = File::open(file_path);
     if file.is_err() { return None; }
@@ -714,6 +798,6 @@ pub fn index_file_name(table_name: &str, column_name: &str) -> String {
 }
 
 
-pub fn relation_file_name(table_name: &str) -> String {
-    format!("db_{}.bin", table_name)
+pub fn relation_file_name(name: &String) -> String {
+    format!("db_{}.bin", name )
 }

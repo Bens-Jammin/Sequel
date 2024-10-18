@@ -27,7 +27,46 @@ impl FilterConditionValue {
             FilterConditionValue::DateRange(_, _) => String::from("Date range"),
         }
     }
+
+    pub fn str(&self) -> Option<String> {
+        match self {
+            FilterConditionValue::String(v) => return Some(v.clone()),
+            _ => return None
+        }
+    }
+
+    pub fn number(&self) -> Option<f64> {
+        match self {
+            FilterConditionValue::Number(v) => return Some(v.clone()),
+            _ => return None
+        }
+    }
+    pub fn date(&self) -> Option<DateTime<Utc>> {
+        match self {
+            FilterConditionValue::Date(v) => return Some(v.clone()),
+            _ => return None
+        }
+    }
+
+    pub fn number_range(&self) -> Option<(f64, f64)> {
+        match self {
+            FilterConditionValue::NumberRange(v1, v2) => return Some( (v1.clone(), v2.clone()) ),
+            _ => return None
+        }
+    }
+
+    pub fn date_range(&self) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+        match self {
+            FilterConditionValue::DateRange(v1, v2) => return Some( (v1.clone(), v2.clone() ) ),
+            _ => return None
+        }
+    }
+
+
+
+
 }
+
 
 
 #[derive(Debug, Clone)]
