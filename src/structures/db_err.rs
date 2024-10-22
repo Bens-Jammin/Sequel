@@ -32,7 +32,10 @@ pub enum DBError {
     ActionNotImplemented(String),
 
     /// first is expected, second is actual
-    MisMatchConditionDataType(FilterConditionValue, FilterConditionValue)
+    MisMatchConditionDataType(FilterConditionValue, FilterConditionValue),
+
+    /// first is filename, second is error message
+    IOFailure(String, String)
 }
 
 
@@ -62,6 +65,8 @@ impl fmt::Display for DBError {
                 => write!(f, "the logic for the function '{func_name}' has not been implemented yet!"),
             DBError::MisMatchConditionDataType(expected, actual)
                 => write!(f, "expected condtion type '{}', got '{}' for a condition.", expected.name(), actual.name()),
+            DBError::IOFailure(filename, msg)
+                => write!(f, "An error has occurred with file {}: {}", filename, msg),
         }
     }
 }

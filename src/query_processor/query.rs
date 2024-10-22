@@ -311,15 +311,19 @@ pub fn execute_query(query: Query) -> Result<Either<Table, String>, DBError>{
 
             return Ok(Either::This(db))
         },
-        Query::EDIT(_new_vals, table, _col_names) => {
-            let _file_path = format!("{}/db_{table}.bin", &relation_directory);
-            // let mut db = structures::table::load_database(&file_path)?;
+        Query::EDIT(new_vals, table, col_names) => {
+            let file_path = format!("{}/db_{table}.bin", &relation_directory);
+            let mut db = structures::table::load_database(&file_path)?;
             
-            // let r = db.edit_rows()
-            // TODO: edit implementation
-            // let r = db.edit_rows()
+            let total_changes: u32 = 0;
+            // for (col, val) in col_names.into_iter().zip(new_vals) {
+                    // TODO: need to get a search criteria in
+            //     let r: Result<u32, DBError> = db.edit_rows(col, col, search_criteria, val);
+            //     total_changes +=  r.unwrap();
+            // }
 
-            // db.save();
+            db.save(relation_directory)?;
+            return Ok(Either::That(format!("{} cells affected.", total_changes)))
         },
         Query::SORT(table, condition, column) => {
             let file_path = format!("{}/db_{table}.bin", &relation_directory);
@@ -360,18 +364,15 @@ pub fn execute_query(query: Query) -> Result<Either<Table, String>, DBError>{
             let mut db = load_database(&file_path)?;
 
             let filtered_table = db.select_rows(&column, filter_condition)?; 
-            return Err(DBError::ActionNotImplemented("Filter Queries".to_owned()))
-            // return Ok(Either::This(filtered_table))
+            return Ok(Either::This(filtered_table))
         },
     }
-
-    Err( DBError::ActionNotImplemented("execute_query".to_owned()) )
 }
 
 
 /// used exclusively for query execution, so that I can return a 
 /// "number of rows affected" statement or the table
-pub enum Either<X, Y> {
+enum Either<X, Y> {
     This(X),
     That(Y),
 }

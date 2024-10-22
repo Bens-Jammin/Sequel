@@ -29,3 +29,7 @@ sequel = "0.2.0"
 ### SORT
 
 ### INDEX
+
+## RUNTIMES
+scan runtime = O(n^2)
+index runtime = O(n)
