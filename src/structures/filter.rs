@@ -91,22 +91,23 @@ pub enum FilterCondition {
 }
 
 impl FilterCondition {
-    // TODO: FIX THIS ASAP !! NEEDS TO INCLUDE FILTER VALUES
     pub fn parse_str(input: &str) -> Option<FilterCondition> {
         
+        println!("parsing `{:?}` as a filter condition...", input);
         let condition_components: Vec<String> = input
             .trim()
             .to_lowercase()
             .split_whitespace()
             .map(|s| str::to_string(s))
             .collect();
-        
-        let valid_relational_operators = vec!["<", "<=", "=", "!=", ">=", ">"];
 
+        println!("conditioncomponents[0] = {}", &condition_components[0]);
+
+        // check if the filter condition is an inequality, equals, or not equals
+        let valid_relational_operators = vec!["<", "<=", "=", "!=", ">=", ">"];
         if valid_relational_operators.contains(&condition_components[0].as_str()) {
             let condition_value = condition_components[1].parse::<f64>().unwrap_or(-1.0);
 
-            // TODO: eventually add relational operators for dates?
             match condition_components[0].trim() {
                 "<=" => return Some(FilterCondition::LessThanOrEqualTo(FilterConditionValue::Number(condition_value))),
                 "<" => return Some(FilterCondition::LessThan(FilterConditionValue::Number(condition_value))),
@@ -118,6 +119,7 @@ impl FilterCondition {
             }
         }
         
+        // check if condition is a range
         if condition_components[0] == "between" {
             match condition_components[1].as_str() {
                 "dates" => {
@@ -134,10 +136,11 @@ impl FilterCondition {
             }
         }
 
+        // check if it's a boolean check
         match input.trim().to_lowercase().as_str() {
             "true" => Some(FilterCondition::True),
             "false" => Some(FilterCondition::False),
-            _ => None,
+            _ => None  // Otherwise, no valid filter found
         }
     }
 }

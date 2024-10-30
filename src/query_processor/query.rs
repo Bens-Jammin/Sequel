@@ -27,8 +27,8 @@ pub enum Query {
     /// INSERT (val1, val2, ..., valn) INTO (table) (col1, col2, ..., coln)
     INSERT(Vec<String>, String, Vec<String>),
 
-    /// EDIT (val1, val2, ..., valn) INTO (table) (col1, col2, ..., coln)
-    EDIT(Vec<String>, String, Vec<String>),
+    /// REPLACE (table) (column) TO (val) WHERE (condition_column) (condition)
+    REPLACE(String, String, FieldValue, String, FilterCondition),
 
     /// DELETE FROM (table) WHERE (column) (condition)
     DELETE(String, String, FilterCondition),
@@ -65,11 +65,12 @@ fn all_queries() -> Vec<Query> {
     let sc = SortCondition::AlphaAscending;
     let fc = FilterCondition::Null;
     let fc2 = FilterCondition::Null;
+    let fv = FieldValue::Null;
 
     vec![
         Query::SELECT(cs.clone(), s.clone()),
         Query::INSERT(cs.clone(), s.clone(), cs.clone()),
-        Query::EDIT(cs.clone(), s.clone(), cs.clone()),
+        Query::REPLACE(s.clone(), s.clone(), fv,s.clone() , fc.clone()),
         Query::DELETE(s.clone(), s.clone(), fc),
         Query::SORT(s.clone(), sc, s.clone()),
         Query::FILTER(s.clone(), s.clone(), fc2),
@@ -85,8 +86,8 @@ impl fmt::Display for Query {
             => write!(f, "SELECT (col1, col2, ...) FROM {{table_name}}"),
             Query::INSERT(_, _, _) 
             => write!(f, "INSERT (val1, val2, ...) INTO {{table}} (col1, col2, ..."),
-            Query::EDIT(_, _, _) 
-            => write!(f, "EDIT (val1, val2, ..., valn) INTO {{table}} (col1, col2, ...)"),
+            Query::REPLACE(_, _, _, _, _) 
+            => write!(f, "REPLACE {{table}} {{column}} TO {{val}} WHERE {{column}} {{condition}}"),
             Query::DELETE(_, _, _) 
             => write!(f, "DELETE FROM {{table}} WHERE {{column}} {{condition}}"),
             Query::SORT(_, _, _)
@@ -179,14 +180,27 @@ pub fn parse_query(command: String) -> Option<Query> {
             let columns = parse_list(parts[into_index + 2]);
             return Some(Query::INSERT(values, table, columns));
         }
-    } else if main_query_command.starts_with("edit") {
-        // EDIT (val1, val2, ..., valn) INTO (table) (col1, col2, ..., coln)
-        if let Some(into_index) = parts.iter().position(|&s| s.to_lowercase() == "into") {
-            let values = parse_list(parts[1]);
-            let table = parts[into_index + 1].trim_matches(|c| c == '(' || c == ')').to_string();
-            let columns = parse_list(parts[into_index + 2]);
-            return Some(Query::EDIT(values, table, columns));
-        }
+    } else if main_query_command.starts_with("replace") {   
+        // REPLACE (table) (column) TO (val) WHERE (condition_column) (condition)
+        println!("replacing!");
+        println!("parts = {:?}", &parts);
+        let table_name = parts[1].to_owned();
+        let modified_column_name = parts[2].to_owned();
+        let val_to_replace_with = parse_into_field_value( &parts[4].to_string() );
+        let condition_column = parts[6].to_owned();
+        let condition_str: String = parts[7..].iter().map(|s| format!("{} ", s)).collect();
+        let replacement_condition = FilterCondition::parse_str( &condition_str )?;
+        println!("replacement condition is {:?}", &replacement_condition);
+        let q = Query::REPLACE(
+            table_name, 
+            modified_column_name, 
+            val_to_replace_with, 
+            condition_column, 
+            replacement_condition
+        );
+        println!("returning query: {:?}", q);
+        return Some(q);
+        
     } else if main_query_command.starts_with("remove") {
 
         // REMOVE FROM (table) WHERE (column) (condition)
@@ -198,7 +212,7 @@ pub fn parse_query(command: String) -> Option<Query> {
             let column = parts[where_index + 1].trim_matches(|c| c == '(' || c == ')').to_string();
 
             // Parse FilterCondition (e.g., LessThan, GreaterThan, etc.)
-            let condition_str: String = parts[where_index + 2..].iter().map(|s| format!("{}", s)).collect();
+            let condition_str: String = parts[where_index + 2..].iter().map(|s| format!("{} ", s)).collect();
             let condition = FilterCondition::parse_str(&condition_str);
             
             if let Some(cond) = condition {
@@ -311,17 +325,13 @@ pub fn execute_query(query: Query) -> Result<Either<Table, String>, DBError>{
 
             return Ok(Either::This(db))
         },
-        Query::EDIT(new_vals, table, col_names) => {
+        Query::REPLACE(table, modified_column, new_value, condition_column, condition) => {
+            
             let file_path = format!("{}/db_{table}.bin", &relation_directory);
             let mut db = structures::table::load_database(&file_path)?;
             
-            let total_changes: u32 = 0;
-            // for (col, val) in col_names.into_iter().zip(new_vals) {
-                    // TODO: need to get a search criteria in
-            //     let r: Result<u32, DBError> = db.edit_rows(col, col, search_criteria, val);
-            //     total_changes +=  r.unwrap();
-            // }
-
+            let total_changes: u32 = db.edit_rows( condition_column, modified_column, condition, new_value )?;
+            
             db.save(relation_directory)?;
             return Ok(Either::That(format!("{} cells affected.", total_changes)))
         },
@@ -372,7 +382,8 @@ pub fn execute_query(query: Query) -> Result<Either<Table, String>, DBError>{
 
 /// used exclusively for query execution, so that I can return a 
 /// "number of rows affected" statement or the table
-enum Either<X, Y> {
+#[derive(Debug)]
+pub enum Either<X, Y> {
     This(X),
     That(Y),
 }

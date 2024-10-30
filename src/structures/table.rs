@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering, 
-    collections::{btree_map::Range, BTreeMap, HashMap}, 
+    collections::{BTreeMap, HashMap}, 
     fs::{File, OpenOptions}, 
     io::{Read, Write}
 };
@@ -31,7 +31,6 @@ pub struct Table {
 /// * (TOP PRIOTIRY) read 13.2.1 in DB textbook, learn to implement records ( ALSO STUDY FOR MIDTERM(S) )
 /// * (TOP PRIORITY) implement index for primary keys, update them on insertion
 /// * (LOW PRIORITY) learn how to cache values (such as the index and relation paths)
-/// * (MED PRIORITY) update b+ trees on update
 /// =====================================================================================
 
 
@@ -155,14 +154,6 @@ impl Table {
     }
 
     
-    // TODO: learn how to update the BTreeMap<_ , _> efficiently
-    #[allow(dead_code)]
-    fn update_index(&self, column_name: &str) -> Result<(), DBError> {
-        // TODO: https://learn.microsoft.com/en-us/sql/relational-databases/indexes/reorganize-and-rebuild-indexes?view=sql-server-ver16
-        // https://en.wikipedia.org/wiki/Observer_pattern
-        Err(DBError::ActionNotImplemented("Index Updating".to_string()))
-    } 
-
     /// inserts a new row into the database.
     pub fn insert_row(&mut self, row_data: &HashMap<String, FieldValue> ) -> Result<(), DBError> {
 
@@ -215,6 +206,54 @@ impl Table {
 
     }
 
+
+    // NOTE: the update functions aren't in the table code, I have to add it 
+    // TODO: implement `update_index_modify`
+    #[allow(dead_code)]
+    fn update_index_modify(&self, column_name: &str ) -> Result<(), DBError> {
+        
+        let read_result = load_index(INDEX_PATH, &self.name, column_name);
+        if read_result.is_none() {
+            return Err(DBError::IOFailure( index_file_name(&self.name, column_name) , "failed to load index from file.".to_owned() ));
+        } // else {  
+        let index = read_result.unwrap();
+        // }
+
+        Err(DBError::ActionNotImplemented( "Index updating - modify".to_string()))
+    } 
+
+
+    // TODO: test this
+    #[allow(dead_code)]
+    fn update_index_deletion(&self, column_name: &str, fv_from_deleted_row: &FieldValue ) -> Result<(), DBError> {
+
+        let read_result = load_index(INDEX_PATH, &self.name, column_name);
+        if read_result.is_none() {
+            return Err(DBError::IOFailure( index_file_name(&self.name, column_name) , "failed to load index from file.".to_owned() ));
+        } // else {  
+        let index = read_result.unwrap();
+        // }
+
+        Err(DBError::ActionNotImplemented("Index Updating - deletion".to_string()))
+        // Ok(())
+    }
+
+
+    // TODO: test this
+    #[allow(dead_code)]
+    fn update_index_insertion(&self, column_name: &str, fv_from_inserted_row: &FieldValue, row_index: usize) -> Result<(), DBError> {
+
+        let read_result = load_index(INDEX_PATH, &self.name, column_name);
+        if read_result.is_none() {
+            return Err(DBError::IOFailure( index_file_name(&self.name, column_name) , "failed to load index from file.".to_owned() ));
+        } // else {  
+        let index = read_result.unwrap();
+        // }
+
+        Err(DBError::ActionNotImplemented("Index Updating - insertion".to_string()))
+        // Ok(())
+
+    } 
 
 
     pub fn edit_rows(
@@ -447,7 +486,7 @@ impl Table {
             index.range(range)
                 .flat_map(|(_, v)| v.iter().map(|idx| *idx))
                 .collect::<Vec<usize>>()
-        };
+        }
 
         /// makes sure that, to ensure the range is properly built for the index 
         fn validate_condition_is_number(condition: &FilterConditionValue ) -> Result<(), DBError> {
@@ -741,7 +780,6 @@ impl Table {
         let r = file.write_all(&encoded_data);
         if r.is_err() { return Err(DBError::DataBaseFileFailure(file_path)) }
         
-        println!("saved to '{}'", &file_path);
         Ok(())
     }
 
@@ -757,7 +795,7 @@ impl Table {
             return Err(DBError::IOFailure(file_path, "Failed to create file".to_string()));
         }
 
-        let mut file = file_creation_result.unwrap(); 
+        let mut _file = file_creation_result.unwrap(); 
 
         // TODO: for CSV writing 
         // 1. iterate over columns, write their names
