@@ -4,6 +4,7 @@ use std::{
     fs::{File, OpenOptions}, 
     io::{Read, Write}
 };
+use bplustree::BPlusTree;
 use chrono::DateTime;
 use comfy_table::presets::ASCII_MARKDOWN;
 use serde::{Deserialize, Serialize};
@@ -28,7 +29,6 @@ pub struct Table {
 
 /// ====================================================================================
 /// TODO: 
-/// * (TOP PRIOTIRY) read 13.2.1 in DB textbook, learn to implement records ( ALSO STUDY FOR MIDTERM(S) )
 /// * (TOP PRIORITY) implement index for primary keys, update them on insertion
 /// * (LOW PRIORITY) learn how to cache values (such as the index and relation paths)
 /// =====================================================================================
@@ -123,6 +123,16 @@ pub fn format_for_file_name(str: &str) -> String {
 // |===============================|
 
 impl Table {
+    /// # WARNING
+    /// This is a TEMPORARY FUNCTION USED FOR TESTING PURPOSES ONLY ! <br>
+    /// if you are seeing this outside of the sequel source code, something has gone seriously wrong, contact `bmill079@uottawa.ca` ASAP.
+    pub fn index_on(&self, column_name: &str) -> Result<BTreeMap<FieldValue, Vec<usize>>, DBError> {
+        match load_index(INDEX_PATH, &self.name, column_name) {
+            Some(i) => Ok(i),
+            None => Err(DBError::IOFailure( index_file_name(&self.name, column_name) , "failed to load index from file.".to_owned() ))
+        }
+    }
+    
     pub fn new(name: String, columns: Vec<Column>) -> Self {
         // get the primary keys
         let mut primary_keys: Vec<Column> = Vec::new();
@@ -202,6 +212,17 @@ impl Table {
 
         // if there aren't any missing primary keys, push the hashmap and return unit
         self.rows.push( row_data.clone() );
+
+        for indexed_column in self.primary_keys() {
+            let column_name = indexed_column.get_name();
+
+            self.update_index_insertion( 
+                &column_name, 
+                row_data.get(column_name).unwrap(), 
+                self.rows.len() - 1 
+            )?;
+        }
+
         Ok(())
 
     }
@@ -212,46 +233,20 @@ impl Table {
     #[allow(dead_code)]
     fn update_index_modify(&self, column_name: &str ) -> Result<(), DBError> {
         
-        let read_result = load_index(INDEX_PATH, &self.name, column_name);
-        if read_result.is_none() {
-            return Err(DBError::IOFailure( index_file_name(&self.name, column_name) , "failed to load index from file.".to_owned() ));
-        } // else {  
-        let index = read_result.unwrap();
-        // }
+        let index = self.index_on(column_name)?;
 
         Err(DBError::ActionNotImplemented( "Index updating - modify".to_string()))
     } 
 
 
-    // TODO: test this
-    #[allow(dead_code)]
-    fn update_index_deletion(&self, column_name: &str, fv_from_deleted_row: &FieldValue ) -> Result<(), DBError> {
-
-        let read_result = load_index(INDEX_PATH, &self.name, column_name);
-        if read_result.is_none() {
-            return Err(DBError::IOFailure( index_file_name(&self.name, column_name) , "failed to load index from file.".to_owned() ));
-        } // else {  
-        let index = read_result.unwrap();
-        // }
-
-        Err(DBError::ActionNotImplemented("Index Updating - deletion".to_string()))
-        // Ok(())
-    }
-
-
-    // TODO: test this
-    #[allow(dead_code)]
     fn update_index_insertion(&self, column_name: &str, fv_from_inserted_row: &FieldValue, row_index: usize) -> Result<(), DBError> {
 
-        let read_result = load_index(INDEX_PATH, &self.name, column_name);
-        if read_result.is_none() {
-            return Err(DBError::IOFailure( index_file_name(&self.name, column_name) , "failed to load index from file.".to_owned() ));
-        } // else {  
-        let index = read_result.unwrap();
-        // }
+        let mut index = self.index_on(column_name)?;
 
-        Err(DBError::ActionNotImplemented("Index Updating - insertion".to_string()))
-        // Ok(())
+        index.insert( fv_from_inserted_row.clone() , vec![row_index] );
+
+        save_index( INDEX_PATH, &self.name, column_name, index );
+        Ok(())
 
     } 
 
@@ -291,22 +286,41 @@ impl Table {
     /// returns a u32 of the number of rows deleted if the function does not fail.
     pub fn delete_rows(&mut self, column_name: String, search_criteria: FilterCondition ) -> Result<u32, DBError> {
 
-        let filter_result: Result<Table, DBError> = self.select_rows(&column_name, search_criteria);
+        let temp_index = load_index(INDEX_PATH, &self.name, "A" ).unwrap();
+        println!(" wayy before deleting data in index on {}: ", "A");
+        for (k, v) in &temp_index {
+            println!("fv: {} | row idx: {:?}", k, v);
+        }
+        println!("=== END OF INDEX ===\n\n");
 
-        match filter_result { Err(e) => return Err(e), Ok(_) => () };
-        let rows_to_delete = filter_result.unwrap();    // safe to unwrap, if it was an err then the line above would early return
-        let rows_to_delete = rows_to_delete.rows();
+        let filtered_table = self.select_rows(&column_name, search_criteria)?;
+        let rows_to_delete = filtered_table.rows();
+        
+        let kept_rows: Vec<HashMap<String, FieldValue>> = self
+            .rows()
+            .iter()
+            .filter(|r| !rows_to_delete.contains(*r) )
+            .cloned()
+            .collect();
+        
+        
+        // iterate through the indexed columns, deleting the values from any rows that have been removed
+        for indexed_column in self.primary_keys() {
+            let mut index = load_index(INDEX_PATH, &self.name, indexed_column.get_name() ).unwrap();
+            
+            for row in rows_to_delete {
 
-        let mut kept_rows: Vec<HashMap<String, FieldValue>> = Vec::new(); 
-        // loop through all rows, if the row is not in `rows_to_delete`, add it to `kept_rows`, which is to then override the existing rows
-        for row in self.rows() {
-            if rows_to_delete.contains(row) { continue; }   // row is to be deleted
-
-            kept_rows.push( row.clone() );
+                let column_name = indexed_column.get_name();
+    
+                    index.remove(row.get(column_name).unwrap());
+            }
+            
+           save_index( INDEX_PATH, &self.name, indexed_column.get_name(), index );
         }
 
         // override old row data
         self.rows = kept_rows;
+
 
         let number_of_deleted_rows = rows_to_delete.len() as u32; 
         Ok( number_of_deleted_rows )
@@ -463,7 +477,8 @@ impl Table {
             self.search_without_index(column_name, search_criteria)?
         };
 
-        let mut filtered_table = Table::new(self.name.clone(), self.columns().clone());
+        // a new name is required because this table would override the actual table, incluidng index data 
+        let mut filtered_table = Table::new(format!("temp table {} with filtered rows on column {}",&self.name, column_name), self.columns().clone());
 
         for r in matching_rows {
             filtered_table.insert_row( r )?
@@ -499,7 +514,6 @@ impl Table {
             return Ok(())
         }
     
-
         fn validate_condition_is_number_range(condition: &FilterConditionValue ) -> Result<(), DBError> {
             if condition.number_range().is_none() {
                 return Err(DBError::MisMatchConditionDataType(
@@ -509,7 +523,6 @@ impl Table {
             }
             return Ok(())
         }
-
 
         fn search_index_for_bool_or_null(index: BTreeMap<FieldValue, Vec<usize>>, fv: &FieldValue) -> Vec<usize> {
             match index.get(fv) {
@@ -623,7 +636,7 @@ impl Table {
         
 
 
-        let mut reduced_table = Table::new( table_name, table_columns );
+        let mut reduced_table = Table::new( format!("{} with filtered columns", table_name), table_columns );
         
 
         // get new reduced rows
@@ -851,6 +864,7 @@ pub fn load_database(file_path: &str) -> Result<Table, DBError> {
 pub fn save_index(save_dir: &str, table_name: &str, column_name: &str, tree: BTreeMap<FieldValue, Vec<usize>>) {
 
     let file_path: String = format!("{}/{}",save_dir, index_file_name(table_name, column_name));
+
     let encoded_data = bincode::serialize(&tree).unwrap();
     let mut file = File::create(file_path).unwrap();
     file.write_all(&encoded_data).unwrap();
@@ -881,5 +895,5 @@ pub fn index_file_name(table_name: &str, column_name: &str) -> String {
 
 
 pub fn relation_file_name(name: &String) -> String {
-    format!("db_{}.bin", name )
+    format!("db_{}.bin", format_for_file_name(name) )
 }

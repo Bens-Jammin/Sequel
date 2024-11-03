@@ -325,7 +325,7 @@ pub fn execute_query(query: Query) -> Result<Either<Table, String>, DBError>{
 
             return Ok(Either::This(db))
         },
-        Query::REPLACE(table, modified_column, new_value, condition_column, condition) => {
+            Query::REPLACE(table, modified_column, new_value, condition_column, condition) => {
             
             let file_path = format!("{}/db_{table}.bin", &relation_directory);
             let mut db = structures::table::load_database(&file_path)?;
