@@ -2,7 +2,7 @@ use std::{
     cmp::Ordering, 
     collections::{BTreeMap, HashMap}, 
     fs::{File, OpenOptions}, 
-    io::{Read, Write}
+    io::{Read, Write}, usize
 };
 use bplustree::BPlusTree;
 use chrono::DateTime;
@@ -228,16 +228,6 @@ impl Table {
     }
 
 
-    // NOTE: the update functions aren't in the table code, I have to add it 
-    // TODO: implement `update_index_modify`
-    #[allow(dead_code)]
-    fn update_index_modify(&self, column_name: &str ) -> Result<(), DBError> {
-        
-        let index = self.index_on(column_name)?;
-
-        Err(DBError::ActionNotImplemented( "Index updating - modify".to_string()))
-    } 
-
 
     fn update_index_insertion(&self, column_name: &str, fv_from_inserted_row: &FieldValue, row_index: usize) -> Result<(), DBError> {
 
@@ -265,7 +255,55 @@ impl Table {
         let rows_to_edit = filter_result.unwrap();
         let rows_to_edit = rows_to_edit.rows();
 
-        let mut updated_rows: Vec<HashMap<String, FieldValue>> = Vec::new(); 
+        let mut updated_rows: Vec<HashMap<String, FieldValue>> = Vec::new();
+
+        /* 
+        in order to update the indexes for this table, we need the following information:
+        1. all the indexes available for this table
+        2. all the field values for all rows being updated, for all the columns
+        3. the field value which is replacing the outdated values
+        
+        heres pseudocode of my algorithm:
+        for all of the indexes (which iterates over a vector of referenced columns):
+            load the index into memory
+            for all of the rows being updated:
+                load the field value from that row and column (grabbed from the outer for loop)
+                delete that field value from the index, which will return the row indices being stored there
+                
+                if the field value doesn't already exist in the index (i.e. this is after the first iteration): 
+                    insert the new field value with the row index from the previously deleted field value into the index
+                otherwise:
+                    get the vector of indices being stored at that fieldvalue in the index
+                    concatenate the recently retrieved indices to that vector
+                    override the existing index value with the newly concatenated vector of row indices
+            save the index
+        */ 
+
+        for indexed_column in self.primary_keys() {
+            let indexed_column_name = indexed_column.get_name();
+            let mut index = self.index_on(indexed_column_name)?;
+
+            for row in rows_to_edit {
+                let old_field_value = row.get(indexed_column_name).unwrap();
+                index.remove( old_field_value );
+
+                
+                let row_index = self.rows().iter().position(|r| r == row).unwrap();
+                if index.contains_key( &new_value ) {
+                    let mut existing_row_indices = index.remove( &new_value ).unwrap();
+                    existing_row_indices.push(row_index);
+                    index.insert( new_value.clone() , existing_row_indices );
+
+                } else {
+                    index.insert(new_value.clone(), vec![row_index] );
+                }
+            }
+            save_index(INDEX_PATH, &self.name, indexed_column_name, index);
+        }
+
+
+
+        // I honestly have no idea how this works but whatever, have fun debugging this later dipshit
         for mut row in self.rows().clone() {
             if rows_to_edit.contains( &row ) {
                 *row.get_mut(&column_to_edit).unwrap() = new_value.clone();
