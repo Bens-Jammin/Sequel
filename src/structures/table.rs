@@ -1,8 +1,5 @@
 use std::{
-    cmp::Ordering, 
-    collections::{BTreeMap, HashMap}, 
-    fs::{File, OpenOptions}, 
-    io::{Read, Write}, usize
+    cmp::Ordering, collections::{BTreeMap, HashMap}, fs::{File, OpenOptions}, io::{Read, Write}, usize
 };
 use chrono::DateTime;
 use comfy_table::presets::ASCII_MARKDOWN;
@@ -25,12 +22,6 @@ pub struct Table {
     primary_keys: Vec<Column>,
     rows: Vec<HashMap<String, FieldValue>>
 }
-
-/// ====================================================================================
-/// TODO: 
-/// * (TOP PRIORITY) implement index for primary keys, update them on insertion
-/// * (LOW PRIORITY) learn how to cache values (such as the index and relation paths)
-/// =====================================================================================
 
 
 // |===========================|
@@ -172,23 +163,18 @@ impl Table {
         if missing_primary_keys.len() > 0 {
             return Err(DBError::MissingPrimaryKeys( missing_primary_keys ));
         }
-
-        // TODO: implement the same logic using the BTreeMap
         
 
         // make sure the primary key isnt already in the db
-        // for pk in self.primary_keys() {
-        //     let pk_name = pk.get_name();
-        //     let row_pk = row_data.get(pk_name).unwrap();
+        for pk in self.primary_keys() {
+            let pk_name = pk.get_name();
+            let new_row_field_value_at_pk = row_data.get(pk_name).unwrap();
+            let pk_index = load_index( INDEX_PATH, &self.name, pk_name ).unwrap();
 
-        //     for existing_row in &self.rows {
-        //         let existing_row_pk = existing_row.get(pk_name).unwrap();
-
-        //         if row_pk.eq(existing_row_pk) { 
-        //             return Err(DBError::DuplicatePrimaryKey(pk_name.to_string()))
-        //         }
-        //     }
-        // }
+            if pk_index.contains_key( new_row_field_value_at_pk ) {
+                return Err(DBError::DuplicatePrimaryKey(pk_name.to_string()))
+            }
+        }
 
 
 
@@ -420,73 +406,30 @@ impl Table {
 
 impl Table {
 
-    pub fn sort_rows(&mut self, sorting_by: SortCondition, column_to_sort_by: String) -> Result<(), DBError> {
+    pub fn sort_rows(&mut self, sorting_by: SortCondition, sorting_column: String) -> Result<(), DBError> {
         
-        if !self.is_valid_column( &column_to_sort_by ) {
-            return Err(DBError::InvalidColumn( column_to_sort_by.clone() ));
+        if !self.is_valid_column( &sorting_column ) {
+            return Err(DBError::InvalidColumn( sorting_column.clone() ));
+        }
+
+        fn compare(col: &String, a: &HashMap<String, FieldValue>, b: &HashMap<String, FieldValue> , descending_ord: bool) -> Ordering {
+            let a = a.get(col).unwrap();
+            let b = b.get(col).unwrap();
+            let comparison_result = if descending_ord { b.compare_to(a) } else {a.compare_to(b) };
+            match comparison_result {
+                Ok(ordering) => ordering,
+                // temporary, unsure what to do if an error is thrown right now, if its even possible with this implementation 
+                Err(_) => Ordering::Equal   
+            }
         }
 
         match sorting_by {
-            SortCondition::NumericAscending => self.rows.sort_by(|a, b| {
-                let a = a.get(&column_to_sort_by).unwrap();
-                let b = b.get(&column_to_sort_by).unwrap();
-                let comparison_result = a.compare_to(b);
-                match comparison_result {
-                    Ok(ordering) => ordering,
-                    // temporary, unsure what to do if an error is thrown right now, if its even possible with this implementation 
-                    Err(_) => Ordering::Equal   
-                }
-            }),
-            SortCondition::NumericDescending => self.rows.sort_by(|a, b| {
-                let a = a.get(&column_to_sort_by).unwrap();
-                let b = b.get(&column_to_sort_by).unwrap();
-                let comparison_result = b.compare_to(a);
-                match comparison_result {
-                    Ok(ordering) => ordering,
-                    // temporary, unsure what to do if an error is thrown right now, if its even possible with this implementation 
-                    Err(_) => Ordering::Equal   
-                }
-            }),
-            SortCondition::AlphaAscending => self.rows.sort_by(|a, b| {
-                let a = a.get(&column_to_sort_by).unwrap();
-                let b = b.get(&column_to_sort_by).unwrap();
-                let comparison_result = a.compare_to(b);
-                match comparison_result {
-                    Ok(ordering) => ordering,
-                    // temporary, unsure what to do if an error is thrown right now, if its even possible with this implementation 
-                    Err(_) => Ordering::Equal   
-                }
-            }),
-            SortCondition::AlphaDescending => self.rows.sort_by(|a, b| {
-                let a = a.get(&column_to_sort_by).unwrap();
-                let b = b.get(&column_to_sort_by).unwrap();
-                let comparison_result = b.compare_to(a);
-                match comparison_result {
-                    Ok(ordering) => ordering,
-                    // temporary, unsure what to do if an error is thrown right now, if its even possible with this implementation 
-                    Err(_) => Ordering::Equal   
-                }
-            }),
-            SortCondition::DateAscending => self.rows.sort_by(|a, b| {
-                let a = a.get(&column_to_sort_by).unwrap();
-                let b = b.get(&column_to_sort_by).unwrap();
-                let comparison_result = a.compare_to(b);
-                match comparison_result {
-                    Ok(ordering) => ordering,
-                    // temporary, unsure what to do if an error is thrown right now, if its even possible with this implementation 
-                    Err(_) => Ordering::Equal   
-                }
-            }),
-            SortCondition::DateDescending => self.rows.sort_by(|a, b| {
-                let a = a.get(&column_to_sort_by).unwrap();
-                let b = b.get(&column_to_sort_by).unwrap();
-                let comparison_result = b.compare_to(a);
-                match comparison_result {
-                    Ok(ordering) => ordering,
-                    // temporary, unsure what to do if an error is thrown right now, if its even possible with this implementation 
-                    Err(_) => Ordering::Equal   
-                }
-            }),
+            SortCondition::NumericAscending  => self.rows.sort_by(|a, b| compare(&sorting_column, a, b, false)),
+            SortCondition::NumericDescending => self.rows.sort_by(|a, b| compare(&sorting_column, a, b, true)),
+            SortCondition::AlphaAscending    => self.rows.sort_by(|a, b| compare(&sorting_column, a, b, false)),
+            SortCondition::AlphaDescending   => self.rows.sort_by(|a, b| compare(&sorting_column, a, b, true)),
+            SortCondition::DateAscending     => self.rows.sort_by(|a, b| compare(&sorting_column, a, b, false)),
+            SortCondition::DateDescending    => self.rows.sort_by(|a, b| compare(&sorting_column, a, b, true)),
         };
 
 
@@ -700,50 +643,33 @@ impl Table {
 
 fn non_index_row_matches_search_critieria(row_value: &FieldValue, search_criteria: &FilterCondition) 
 -> Result<bool, DBError> {
+
+    fn check_against_condition(
+        condition_value: &FilterConditionValue, 
+        op: fn(&FilterConditionValue, f64) -> bool 
+    ) 
+    -> Result<bool, DBError> {
+        match condition_value {
+            FilterConditionValue::Number(condition_target) => { Ok( op( condition_value, *condition_target ) ) }
+            _ => return Err(DBError::MisMatchConditionDataType(FilterConditionValue::Number(0.0), condition_value.clone()))
+        }
+
+    } 
+
     match &search_criteria {
         // check if the condition is a relational operator (i.e. >, >=, ==, !=, <, <=)
-        FilterCondition::LessThan(condition_value) => {
-            match &condition_value {
-                FilterConditionValue::Number(target_value) => {
-                    row_value.is_less_than(&FieldValue::Number(*target_value))
-                },
-                _ => return Err(DBError::MisMatchConditionDataType(FilterConditionValue::Number(0.0), condition_value.clone()))
-        }},
-        FilterCondition::LessThanOrEqualTo(condition_value) => {
-            match &condition_value {
-                FilterConditionValue::Number(target_value) => {
-                    row_value.is_leq(&FieldValue::Number(*target_value))
-                },
-                _ => return Err(DBError::MisMatchConditionDataType(FilterConditionValue::Number(0.0), condition_value.clone()))
-        }},
-        FilterCondition::GreaterThan(condition_value) => {
-            match &condition_value {
-                FilterConditionValue::Number(target_value) => {
-                    row_value.is_greater_than(&FieldValue::Number(*target_value))
-                },
-                _ => return Err(DBError::MisMatchConditionDataType(FilterConditionValue::Number(0.0), condition_value.clone()))
-        }},
-        FilterCondition::GreaterThanOrEqualTo(condition_value) => {
-            match &condition_value {
-                FilterConditionValue::Number(target_value) => {
-                    row_value.is_geq(&FieldValue::Number(*target_value))
-                },
-                _ => return Err(DBError::MisMatchConditionDataType(FilterConditionValue::Number(0.0), condition_value.clone()))
-        }},
-        FilterCondition::Equal(condition_value) => {
-            match &condition_value {
-                FilterConditionValue::Number(target_value) => {
-                    Ok(row_value.eq(&FieldValue::Number(*target_value)))
-                },
-                _ => return Err(DBError::MisMatchConditionDataType(FilterConditionValue::Number(0.0), condition_value.clone()))
-        }},
-        FilterCondition::NotEqual(condition_value) => {
-            match &condition_value {
-                FilterConditionValue::Number(target_value) => {
-                    Ok(!row_value.eq(&FieldValue::Number(*target_value)))
-                },
-                _ => return Err(DBError::MisMatchConditionDataType(FilterConditionValue::Number(0.0), condition_value.clone()))
-        }},
+        FilterCondition::LessThan(condition_value) =>
+            check_against_condition(condition_value, |v1, v2| v1.number().unwrap() < v2),
+        FilterCondition::LessThanOrEqualTo(condition_value) =>
+            check_against_condition(condition_value, |v1, v2| v1.number().unwrap() <= v2),
+        FilterCondition::GreaterThan(condition_value) =>
+            check_against_condition(condition_value, |v1, v2| v1.number().unwrap() > v2),
+        FilterCondition::GreaterThanOrEqualTo(condition_value) =>
+            check_against_condition(condition_value, |v1, v2| v1.number().unwrap() >= v2),
+        FilterCondition::Equal(condition_value) => 
+            check_against_condition(condition_value, |v1, v2| v1.number().unwrap() == v2),
+        FilterCondition::NotEqual(condition_value) =>
+            check_against_condition(condition_value, |v1, v2| v1.number().unwrap() != v2),
         FilterCondition::NumberBetween(condition_value) => {
             // make sure the target value is a range so we can see if the cell value is in a range
             match &condition_value { 
@@ -834,28 +760,7 @@ impl Table {
     }
 
 
-    
-    // TODO:
-    pub fn to_excel(&self) -> Result<(), DBError> { todo!(); }
-    pub fn to_csv(&self)   -> Result<(), DBError> { 
-        let file_path = format!("{}/{}", config::EXPORT_PATH, self.file_name_for_export("csv") );
-
-        let file_creation_result = File::create(&file_path);
-        if file_creation_result.is_err() {
-            return Err(DBError::IOFailure(file_path, "Failed to create file".to_string()));
-        }
-
-        let mut _file = file_creation_result.unwrap(); 
-
-        // TODO: for CSV writing 
-        // 1. iterate over columns, write their names
-        // 2. iterate over rows, write their data
-        // 3. write to file, throw a "writing to file" error if one occurs. 
-
-        Ok(())
-     }
-
-
+    #[allow(dead_code)]
     fn file_name_for_export(&self, file_extension: &str) -> String {
         format!("sequelDB_{}.{}", &self.name, file_extension)
     } 

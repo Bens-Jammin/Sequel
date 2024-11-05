@@ -56,7 +56,7 @@ impl fmt::Display for DBError {
             DBError::MissingModifyCriteria(modify_type) 
                 => write!(f, "the row modify method '{}' is missing a value", modify_type),
             DBError::DuplicatePrimaryKey(pk_col_name) 
-                => write!(f, "primary key value already exists in the column '{}'", pk_col_name),
+                => write!(f, "You cannot insert a primary key value that already exists in the column '{}'", pk_col_name),
             DBError::MandatoryColumn(col_name) 
                 => write!(f, "The column '{}' is a requirement for this or other tables.", col_name),
             DBError::DataBaseFileFailure(file_path)
