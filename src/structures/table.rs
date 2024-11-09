@@ -1,5 +1,5 @@
 use std::{
-    cmp::Ordering, collections::{BTreeMap, HashMap}, fs::{File, OpenOptions}, io::{Read, Write}, usize
+    cmp::Ordering, collections::{BTreeMap, HashMap}, fmt::Debug, fs::{File, OpenOptions}, io::{Read, Write}, usize
 };
 use chrono::DateTime;
 use comfy_table::presets::ASCII_MARKDOWN;
@@ -744,6 +744,7 @@ impl Table {
         if encoded_data.is_err() { return Err(DBError::DataBaseFileFailure(file_path.to_owned())) }
         let encoded_data = encoded_data.unwrap();
 
+        // open the file in a way that it appends data to the end of the file, not overriding the data 
         let file = OpenOptions::new()
             .write(true)
             .create(true)
@@ -763,6 +764,61 @@ impl Table {
     #[allow(dead_code)]
     fn file_name_for_export(&self, file_extension: &str) -> String {
         format!("sequelDB_{}.{}", &self.name, file_extension)
+    }
+
+
+    pub fn export_to_csv(&self, path: &str, delimiter: &str ) -> Result<(), DBError> {
+
+        if !path.contains(".csv") {
+            return Err(DBError::IOFailure(path.to_owned(), "path given doesn't lead to a .csv file.".to_owned()))
+        }
+
+        // create the file if it doesn't exist
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open( path )
+            .map_err(
+                |_| DBError::IOFailure(path.to_owned(), "unable to open file".to_string())
+            )?;
+
+
+
+        let mut table_data_as_csv: String = String::new();
+        for (idx, col) in self.columns().iter().enumerate() {
+            table_data_as_csv.push_str( col.get_name() );
+
+            if idx + 1 != self.columns().len() {
+                table_data_as_csv.push_str( delimiter );
+            } else {
+                table_data_as_csv.push_str( "\n" );
+            }
+        }
+
+
+        for row in self.rows() {
+            let mut formatted_row_data: String = String::new();
+
+            for (idx, col) in self.columns().iter().enumerate() {
+                let data = format!("{}", row[col.get_name()]);
+                
+                formatted_row_data.push_str( &data );
+                // last item, no need to add delimiter
+                if idx + 1 != self.columns().len() {
+                    formatted_row_data.push_str( delimiter )
+                } else {
+                    formatted_row_data.push_str( "\n" );
+                }
+            }
+            table_data_as_csv.push_str( &formatted_row_data );
+        }
+
+
+        file.write_all( table_data_as_csv.as_bytes() ).map_err(
+            |_| return  DBError::IOFailure(path.to_owned(), "Failed to write data to CSV".to_owned())
+        )?;
+
+        Ok(())
     } 
 }
 
