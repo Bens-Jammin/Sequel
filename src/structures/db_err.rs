@@ -39,6 +39,7 @@ pub enum DBError {
 }
 
 
+// TODO: implement macros ?
 impl Error for DBError {}
 
 

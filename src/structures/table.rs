@@ -3,6 +3,7 @@ use std::{
 };
 use chrono::DateTime;
 use comfy_table::presets::ASCII_MARKDOWN;
+use rust_xlsxwriter::{workbook, worksheet, Format, Workbook};
 use serde::{Deserialize, Serialize};
 use bincode;
 use crate::{
@@ -22,6 +23,9 @@ pub struct Table {
     primary_keys: Vec<Column>,
     rows: Vec<HashMap<String, FieldValue>>
 }
+
+
+
 
 
 // |===========================|
@@ -767,11 +771,41 @@ impl Table {
     }
 
 
+    pub fn export_to_xlsx(&self, path: &str) -> Result<(), DBError> {
+        
+        let file_path = format!("{}/{}", path, self.file_name_for_export(".xlsx"));
+        let mut workbook = Workbook::new();
+        let worksheet = workbook.add_worksheet();
+        
+
+        // set column widths
+        // worksheet.set_column_width(c, px).map_err(|_| Err(DBErr::FileErr("err text here".to_owned())))?;
+
+        let row_offset = 3; // rows to the left of the table
+        let col_offset = 1; // rows on top of the table
+
+
+        for (row_idx , row) in self.rows().iter().enumerate() {
+
+            for (col_idx, col) in self.columns().iter().enumerate() {
+                let cell = row.get(col.get_name()).unwrap();
+
+                let xlxs_row_number: u32 = (row_offset + row_idx).try_into().unwrap();
+                let xlxs_col_number: u16 = (col_offset + col_idx).try_into().unwrap();
+
+                worksheet.write(xlxs_row_number, xlxs_col_number, format!( "{}", cell )).unwrap();
+            }
+        }
+    
+        workbook.save( file_path ).unwrap();
+        Ok(())
+    }
+
+
     pub fn export_to_csv(&self, path: &str, delimiter: &str ) -> Result<(), DBError> {
 
-        if !path.contains(".csv") {
-            return Err(DBError::IOFailure(path.to_owned(), "path given doesn't lead to a .csv file.".to_owned()))
-        }
+        let path = &format!("{}/{}", path,  &self.file_name_for_export(".csv") );
+
 
         // create the file if it doesn't exist
         let mut file = OpenOptions::new()
