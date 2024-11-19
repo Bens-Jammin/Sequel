@@ -45,6 +45,7 @@ pub enum Query {
     // CREATE (table_name) COLUMNS (col_name1:data_type1, etc) KEYS (col_name_1, etc)
     CREATE(String, Vec<String>, Vec<DataType>, Vec<String>),
 
+    // TODO: add import, export, (join ?)
 }
 
 
@@ -358,7 +359,7 @@ pub fn execute_query(query: Query) -> Result<Either<Table, String>, DBError>{
                 let column_is_key = keys.contains(col);
                 columns.push(Column::new(col.clone(), datatype.clone(), column_is_key));
             }
-            let db = Table::new(table.clone(), columns);
+            let db = Table::new(table.clone(), columns, true);
             let _ = db.save(relation_directory);
             return Ok(Either::That(format!("Created table '{table}'")))
         },

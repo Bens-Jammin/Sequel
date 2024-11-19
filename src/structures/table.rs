@@ -1,9 +1,9 @@
 use std::{
-    cmp::Ordering, collections::{BTreeMap, HashMap}, fmt::Debug, fs::{File, OpenOptions}, io::{Read, Write}, usize
+    cmp::Ordering, collections::{BTreeMap, BinaryHeap, HashMap, VecDeque}, fmt::Debug, fs::{File, OpenOptions}, io::{Read, Write}, usize
 };
 use chrono::DateTime;
 use comfy_table::presets::ASCII_MARKDOWN;
-use rust_xlsxwriter::{workbook, worksheet, Format, Workbook};
+use rust_xlsxwriter::Workbook;
 use serde::{Deserialize, Serialize};
 use bincode;
 use crate::{
@@ -33,6 +33,10 @@ pub struct Table {
 // |===========================|
 
 impl Table {
+
+    pub fn name(&self) -> String {
+        self.name.clone()
+    }
     pub fn rows(&self) -> &Vec<HashMap<String, FieldValue>> { &self.rows }
 
     pub fn number_of_rows(&self) -> usize { self.rows.len() }
@@ -127,7 +131,7 @@ impl Table {
         }
     }
     
-    pub fn new(name: String, columns: Vec<Column>) -> Self {
+    pub fn new(name: String, columns: Vec<Column>, disable_primary_keys: bool) -> Self {
         // get the primary keys
         let mut primary_keys: Vec<Column> = Vec::new();
         for c in &columns {
@@ -138,13 +142,13 @@ impl Table {
             primary_keys.push(pk);
         }
 
-        // ad a 'tuple id' column if there are no primary keys
-        if primary_keys.len() == 0 {
+        // add a 'tuple id' column if there are no primary keys
+        // ONLY IF primary keys are enabled
+        if !disable_primary_keys && primary_keys.len() == 0 {
             let id_column = Column::new("Tuple ID".to_string(), DataType::Number, true);
             primary_keys.push(id_column.clone());
             let mut columns = columns.clone();
-            columns.push(id_column)
-
+            columns.push(id_column);
         }
 
         let instance = Self { name: name, columns: columns, primary_keys: primary_keys.clone(), rows: Vec::new() };
@@ -176,6 +180,7 @@ impl Table {
             let pk_index = load_index( INDEX_PATH, &self.name, pk_name ).unwrap();
 
             if pk_index.contains_key( new_row_field_value_at_pk ) {
+                println!("already have {}", new_row_field_value_at_pk);
                 return Err(DBError::DuplicatePrimaryKey(pk_name.to_string()))
             }
         }
@@ -194,7 +199,7 @@ impl Table {
             let col = col.unwrap();
 
             // validate datatypes match
-            if !col.get_data_type().eq(&given_field_value.data_type()) {
+            if !given_field_value.eq(&FieldValue::Null) && !col.get_data_type().eq(&given_field_value.data_type()) {
                 return Err(DBError::MisMatchDataType(col.get_data_type().clone(), given_field_value.data_type()));
             }
         }
@@ -462,7 +467,7 @@ impl Table {
         };
 
         // a new name is required because this table would override the actual table, incluidng index data 
-        let mut filtered_table = Table::new(format!("temp table {} with filtered rows on column {}",&self.name, column_name), self.columns().clone());
+        let mut filtered_table = Table::new(format!("temp table {} with filtered rows on column {}",&self.name, column_name), self.columns().clone(), true);
 
         for r in matching_rows {
             filtered_table.insert_row( r )?
@@ -617,10 +622,9 @@ impl Table {
             }
 
         }
-        
+    
 
-
-        let mut reduced_table = Table::new( format!("{} with filtered columns", table_name), table_columns );
+        let mut reduced_table = Table::new( format!("{} with filtered columns", table_name), table_columns, true );
         
 
         // get new reduced rows
@@ -637,10 +641,294 @@ impl Table {
                 Err(e) => return Err(e),
             }
         }
-
+        
         Ok( reduced_table )
     }
+    
+    // TODO: implement logging and recovery (ARIES if possible, simplified recovery function otherwise)
+    // TODO: implement Aggregation ? maybe?
+    
+    /// performs a cartesian product on the two tables
+    pub fn cartesian_join(&self, other: &Table) -> Result<Table, DBError> {
 
+        let mut join_table_columns: Vec<Column> = Vec::new();
+
+        for col in self.columns() {
+            let mut c = col.clone();
+            c.change_pk_state( false );
+            join_table_columns.push( c );
+        }
+        for col in other.columns() {
+                let mut c = col.clone();
+                c.new_name( format!("{} (S)", c.get_name()) );
+                c.change_pk_state( false );
+                join_table_columns.push( c );
+        }        
+        let mut join_table: Table = Table::new(
+            format!("Cartesian Join Result of Tables {} and {}", self.name(), other.name()),
+            join_table_columns,
+            true
+        );
+        
+        // Nested loop join method
+        for r_row in self.rows() {
+            for s_row in other.rows() {
+                let mut joined_row = r_row.clone();
+
+                for (k, v) in s_row {
+                    // don't forget to reformat the column names for the rows in `other` !
+                    joined_row.insert( format!("{} (S)", k), v.clone());
+                }
+                join_table.insert_row(&joined_row)?;
+            }
+        }
+
+        Ok(join_table)
+    }
+
+
+    pub fn outer_join(&self, other: &Table, column_to_join: String) -> Result<Table, DBError> {
+        #[derive(Debug)]
+        struct JoinPair { value_to_sort_on: FieldValue, row_index: usize }
+
+        fn cmp_pairs(p1: &JoinPair, p2: &JoinPair) -> Ordering {
+            p1.value_to_sort_on.cmp(&p2.value_to_sort_on)
+        }
+        fn join_rows(r1: &HashMap<String, FieldValue>, r2: &HashMap<String, FieldValue>, join_column: &String) -> HashMap<String, FieldValue> {
+            let mut result = HashMap::new();
+            for (k, v) in r1 {
+                result.insert(k.to_string(), v.clone());
+            }
+            for (k, v) in r2 {
+                if k == join_column { continue; }
+                result.insert(k.to_string(), v.clone());
+            }
+    
+            result
+        }
+
+        let mut join_table_columns: Vec<Column> = Vec::new();
+
+        for col in self.columns() {
+            if col.get_name() == column_to_join { continue; }
+            let mut c = col.clone();
+            c.change_pk_state( false );
+            join_table_columns.push( c );
+        }
+        for col in other.columns() {
+            let mut c = col.clone();
+            c.change_pk_state( false );
+            join_table_columns.push( c );
+        }
+
+        let mut join_table: Table = Table::new(
+            format!("Join Result of Tables {} and {} on column {}", self.name(), other.name(), &column_to_join),
+            join_table_columns,
+            true
+        );
+
+
+        // make sure there's at least one element
+        if self.rows().len() == 0 || other.rows().len() == 0 {
+            println!("[MERGE JOIN DEBUG]: no element in either table !");
+            return Ok(join_table)
+        }
+
+        let mut r_join_elements: Vec<JoinPair> = Vec::new();
+        let mut s_join_elements: Vec<JoinPair> = Vec::new();
+
+        for (idx, r) in self.rows().iter().enumerate() {
+            let field_value = r.get(&column_to_join).unwrap();
+            r_join_elements.push( JoinPair{ value_to_sort_on: field_value.clone(), row_index: idx} );
+        } 
+        for (idx, r) in other.rows().iter().enumerate() {
+            let field_value = r.get(&column_to_join).unwrap();
+            s_join_elements.push( JoinPair{ value_to_sort_on: field_value.clone(), row_index: idx} );
+        }
+
+        
+        r_join_elements.sort_by(|a, b| cmp_pairs(a, b) );
+        s_join_elements.sort_by(|a, b| cmp_pairs(a, b) );
+        
+
+
+        let mut marked_row: Option<usize> = None;
+        let mut r_pointer: usize = 0;
+        let mut s_pointer: usize = 0;
+        let mut r_ptr_in_result: bool = false;
+        let mut skipped_rows: Vec<usize> = Vec::new();
+
+        // TODO: need to rethink the whole skipped row vector thing
+
+        'outer: loop {
+            // stop when one list ran out of elements
+            if r_pointer == r_join_elements.len() || s_pointer == s_join_elements.len() {
+                break 'outer;
+            }
+
+            if marked_row.is_none() {
+
+                'until_eq: loop {
+                    let row_cmp_result = cmp_pairs(&r_join_elements[r_pointer], &s_join_elements[s_pointer]);
+                    if row_cmp_result == Ordering::Equal     { break 'until_eq; }
+                    else if row_cmp_result == Ordering::Less { 
+                        println!("is the r pointer ({}) in the result? {}", r_pointer, r_ptr_in_result);
+                        if !r_ptr_in_result { skipped_rows.push( (&r_join_elements[r_pointer]).row_index ); }
+                        r_ptr_in_result = false; 
+                        r_pointer += 1;
+                    }
+                    else /* if r > s */                      { s_pointer += 1;  }
+                }
+                marked_row = Some( s_pointer );
+            }
+
+            if cmp_pairs( &r_join_elements[r_pointer], &s_join_elements[s_pointer] ) == Ordering::Equal {
+                let r1 =  self.get_row(r_join_elements[r_pointer].row_index).unwrap();
+                let r2 = other.get_row(s_join_elements[s_pointer].row_index).unwrap();
+                join_table.insert_row( &join_rows(r1, r2, &column_to_join) )?;
+                r_ptr_in_result = true;
+                s_pointer += 1;
+            } else {
+                s_pointer  = marked_row.unwrap();
+                r_ptr_in_result = false;
+                r_pointer += 1;
+                marked_row = None;
+            }
+        } 
+
+        if r_pointer == r_join_elements.len() {
+            return Ok(join_table)
+        }
+
+        println!("r = {} s = {}", r_pointer, s_pointer);        
+
+        while r_pointer != r_join_elements.len() {
+            // make sure the last element of r wasn't used in the result
+            if r_ptr_in_result { r_pointer += 1; r_ptr_in_result = false; continue; } 
+
+            skipped_rows.push( (&r_join_elements[r_pointer]).row_index );
+            r_pointer += 1;
+        }
+
+        // add any skipped rows in R to the join result with `NULL` values in the columns from S
+        for row_index in skipped_rows {
+            let mut r = self.rows().get( row_index ).unwrap().clone();
+            for column in other.columns() {
+                if column.get_name() == &column_to_join { continue; } // exists in R!
+                r.insert( column.get_name().to_string(), FieldValue::Null );
+            } 
+            join_table.insert_row(&r)?;
+        }        
+
+        return Ok(join_table)
+    }
+
+
+
+    /// The sequel equivalent of  
+    pub fn inner_join(&self, other: &Table, column_to_join: String) -> Result<Table, DBError> {
+        
+        #[derive(Debug)]
+        struct JoinPair { value_to_sort_on: FieldValue, row_index: usize }
+
+        fn cmp_pairs(p1: &JoinPair, p2: &JoinPair) -> Ordering {
+            p1.value_to_sort_on.cmp(&p2.value_to_sort_on)
+        }
+        fn join_rows(r1: &HashMap<String, FieldValue>, r2: &HashMap<String, FieldValue>, join_column: &String) -> HashMap<String, FieldValue> {
+            let mut result = HashMap::new();
+            for (k, v) in r1 {
+                result.insert(k.to_string(), v.clone());
+            }
+            for (k, v) in r2 {
+                if k == join_column { continue; }
+                result.insert(k.to_string(), v.clone());
+            }
+    
+            result
+        }
+
+        let mut join_table_columns: Vec<Column> = Vec::new();
+
+        for col in self.columns() {
+            if col.get_name() == column_to_join { continue; }
+            join_table_columns.push( col.clone() );
+        }
+        for col in other.columns() {
+            if col.get_name() == column_to_join {
+                let mut c = col.clone();
+                c.change_pk_state( false );
+                join_table_columns.push( c );
+            } else {
+                join_table_columns.push( col.clone() );
+            }
+        }
+
+        let mut join_table: Table = Table::new(
+            format!("Join Result of Tables {} and {} on column {}", self.name(), other.name(), &column_to_join),
+            join_table_columns,
+            false
+        );
+
+
+        // make sure there's at least one element
+        if self.rows().len() == 0 || other.rows().len() == 0 {
+            println!("[MERGE JOIN DEBUG]: no element in either table !");
+            return Ok(join_table)
+        }
+
+        let mut r_join_elements: Vec<JoinPair> = Vec::new();
+        let mut s_join_elements: Vec<JoinPair> = Vec::new();
+
+        for (idx, r) in self.rows().iter().enumerate() {
+            let field_value = r.get(&column_to_join).unwrap();
+            r_join_elements.push( JoinPair{ value_to_sort_on: field_value.clone(), row_index: idx} );
+        } 
+        for (idx, r) in other.rows().iter().enumerate() {
+            let field_value = r.get(&column_to_join).unwrap();
+            s_join_elements.push( JoinPair{ value_to_sort_on: field_value.clone(), row_index: idx} );
+        }
+
+        
+        r_join_elements.sort_by(|a, b| cmp_pairs(a, b) );
+        s_join_elements.sort_by(|a, b| cmp_pairs(a, b) );
+        
+
+        let mut marked_row: Option<usize> = None;
+        let mut r_pointer: usize = 0;
+        let mut s_pointer: usize = 0;
+
+
+        'outer: loop {
+            // stop when one list ran out of elements
+            if r_pointer == r_join_elements.len() || s_pointer == s_join_elements.len() {
+                break 'outer;
+            }
+
+            if marked_row.is_none() {
+
+                'until_eq: loop {
+                    let row_cmp_result = cmp_pairs(&r_join_elements[r_pointer], &s_join_elements[s_pointer]);
+                    if row_cmp_result == Ordering::Equal     { break 'until_eq; }
+                    else if row_cmp_result == Ordering::Less { r_pointer += 1;  }
+                    else /* if r > s */                      { s_pointer += 1;  }
+                }
+                marked_row = Some( s_pointer );
+            }
+
+            if cmp_pairs( &r_join_elements[r_pointer], &s_join_elements[s_pointer] ) == Ordering::Equal {
+                let r1 =  self.get_row(r_join_elements[r_pointer].row_index).unwrap();
+                let r2 = other.get_row(s_join_elements[s_pointer].row_index).unwrap();
+                join_table.insert_row( &join_rows(r1, r2, &column_to_join) )?;
+                s_pointer += 1;
+            } else {
+                s_pointer  = marked_row.unwrap();
+                r_pointer += 1;
+                marked_row = None;
+            }
+        } 
+
+        return Ok(join_table)
+    }
 
 }
 
@@ -771,28 +1059,48 @@ impl Table {
     }
 
 
-    pub fn export_to_xlsx(&self, path: &str) -> Result<(), DBError> {
-        
+}
+
+
+// External File IO
+impl Table {
+
+    // TODO: implement importing CSV / XLSX
+    pub fn import_xlsx() {}
+    pub fn import_csv()  {}
+    
+    pub fn export_to_xlsx(&self, path: &str, row_offset: usize, col_offset: usize, min_col_width: f64) -> Result<(), DBError> {
         let file_path = format!("{}/{}", path, self.file_name_for_export(".xlsx"));
         let mut workbook = Workbook::new();
         let worksheet = workbook.add_worksheet();
         
-
         // set column widths
-        // worksheet.set_column_width(c, px).map_err(|_| Err(DBErr::FileErr("err text here".to_owned())))?;
-
-        let row_offset = 3; // rows to the left of the table
-        let col_offset = 1; // rows on top of the table
-
-
+        for (idx, col) in self.columns().iter().enumerate() {
+            let mut max_cell_size = 0 as usize;
+            for row in self.rows() {
+                let cell_size = row
+                    .get(col.get_name())
+                    .unwrap()
+                    .to_string()
+                    .len();
+                
+                if max_cell_size < cell_size {
+                    max_cell_size = cell_size;
+                }
+                
+            }
+    
+            let col_width = if max_cell_size < (min_col_width as usize) { min_col_width } else { max_cell_size as f64 };
+            worksheet.set_column_width( (row_offset+idx).try_into().unwrap() , col_width ).unwrap();
+        }
+    
         for (row_idx , row) in self.rows().iter().enumerate() {
-
             for (col_idx, col) in self.columns().iter().enumerate() {
                 let cell = row.get(col.get_name()).unwrap();
-
+    
                 let xlxs_row_number: u32 = (row_offset + row_idx).try_into().unwrap();
                 let xlxs_col_number: u16 = (col_offset + col_idx).try_into().unwrap();
-
+    
                 worksheet.write(xlxs_row_number, xlxs_col_number, format!( "{}", cell )).unwrap();
             }
         }
@@ -834,7 +1142,7 @@ impl Table {
             let mut formatted_row_data: String = String::new();
 
             for (idx, col) in self.columns().iter().enumerate() {
-                let data = format!("{}", row[col.get_name()]);
+                let data = row[col.get_name()].to_string();
                 
                 formatted_row_data.push_str( &data );
                 // last item, no need to add delimiter

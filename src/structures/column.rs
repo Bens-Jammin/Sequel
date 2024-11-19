@@ -3,7 +3,7 @@ use std::cmp::Ordering;
 
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
-use super::{db_err::DBError, filter::FilterConditionValue};
+use super::db_err::DBError;
 use url::Url;
 
 
@@ -23,6 +23,8 @@ impl Column {
     pub fn get_name(&self)       -> &str      { &self.name }
     pub fn get_data_type(&self)  -> &DataType { &self.data_type }
     pub fn is_primary_key(&self) -> bool      { self.is_primary_key }
+    pub fn change_pk_state(&mut self, is_pk: bool)  { self.is_primary_key = is_pk; }
+    pub fn new_name(&mut self, new_name: String) { self.name = new_name; }
 }
 
 
@@ -36,6 +38,7 @@ pub enum DataType {
 }
 
 
+// TODO: implement a to_string() function
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum FieldValue {
     String(String),
@@ -62,17 +65,10 @@ impl PartialOrd for FieldValue {
 
 impl Eq for FieldValue {}
 
+
 impl Ord for FieldValue {
     fn cmp(&self, other: &Self) -> Ordering {
-        match (self, other) {
-            (FieldValue::String(s0), FieldValue::String(s1)) => s0.cmp(s1),
-            (FieldValue::Number(n1), FieldValue::Number(n2)) => n1.total_cmp(n2),
-            (FieldValue::Date(d1), FieldValue::Date(d2)) => d1.cmp(d2),
-            (FieldValue::Url(u1), FieldValue::Url(u2)) => u1.cmp(u2),
-            (FieldValue::Boolean(b1), FieldValue::Boolean(b2)) => b1.cmp(b2),
-            (FieldValue::Null, _) => Ordering::Less,
-            _ => Ordering::Equal
-        }
+        self.compare_to( other ).unwrap()
     }
     
     fn max(self, other: Self) -> Self
@@ -125,6 +121,11 @@ pub fn parse_str(str: &str) -> DataType {
         "string" | "str"   => return DataType::String,
         _ => DataType::Number
     } 
+}
+
+impl FieldValue {
+    pub fn to_string(&self) -> String { format!("{}", self) }
+
 }
 
 
@@ -357,6 +358,11 @@ impl FieldValue {
         }
 
     }
+
+
+    pub fn are_equal(&self, other: &FieldValue) -> bool {
+        self.compare_to(other).unwrap_or_else( |_| Ordering::Less ) == Ordering::Equal 
+    }
 }
 
 
@@ -410,6 +416,7 @@ impl PartialEq for FieldValue {
             (Self::Date(l0), Self::Date(r0)) => l0 == r0,
             (Self::Url(l0), Self::Url(r0)) => l0 == r0,
             (Self::Boolean(l0), Self::Boolean(r0)) => l0 == r0,
+            (Self::Null, Self::Null) => true,
             _ => false,
         }
     }
