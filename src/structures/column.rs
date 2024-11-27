@@ -38,7 +38,6 @@ pub enum DataType {
 }
 
 
-// TODO: implement a to_string() function
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum FieldValue {
     String(String),
@@ -113,7 +112,9 @@ impl Ord for FieldValue {
 /// 4. "boolean" OR "bool" -> Boolean
 /// 5. "string" OR "str" -> String
 pub fn parse_str(str: &str) -> DataType {
-    match str.trim().to_lowercase().as_str() {
+    let lowercased = str.to_lowercase();
+    
+    match lowercased.as_str() {
         "number"           => return DataType::Number,
         "date"             => return DataType::Date,
         "url"              => return DataType::Url, 

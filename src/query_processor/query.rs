@@ -1,21 +1,14 @@
 use core::fmt;
 use std::collections::HashMap;
 use crate::{config, structures::{
-    self, 
     column::{
-        parse_into_field_value, 
-        parse_str, 
-        Column, 
-        DataType, 
-        FieldValue
+        parse_into_field_value, parse_str, 
+        Column, DataType, FieldValue
     }, 
     db_err::DBError, 
     filter::FilterCondition, 
-    sort::SortCondition, 
-    table::{
-        load_database, 
-        Table
-    }
+    relation::{io::load_database, table::Table}, 
+    sort::SortCondition
 }};
 
 
@@ -304,7 +297,7 @@ pub fn execute_query(query: Query) -> Result<Either<Table, String>, DBError>{
     match query {
         Query::SELECT(col_names, table) => {
             let file_path = format!("{}/db_{table}.bin", &relation_directory);
-            let db = structures::table::load_database(&file_path)?;
+            let db = load_database(&file_path)?;
 
             let r = db.select_columns(&col_names)?;
 
@@ -312,7 +305,7 @@ pub fn execute_query(query: Query) -> Result<Either<Table, String>, DBError>{
         },
         Query::INSERT(new_vals, table, col_names) => {
             let file_path = format!("{}/db_{table}.bin", &relation_directory);
-            let mut db = structures::table::load_database(&file_path)?;
+            let mut db = load_database(&file_path)?;
             
             let mut row: HashMap<String, FieldValue> = HashMap::new();
 
@@ -329,7 +322,7 @@ pub fn execute_query(query: Query) -> Result<Either<Table, String>, DBError>{
             Query::REPLACE(table, modified_column, new_value, condition_column, condition) => {
             
             let file_path = format!("{}/db_{table}.bin", &relation_directory);
-            let mut db = structures::table::load_database(&file_path)?;
+            let mut db = load_database(&file_path)?;
             
             let total_changes: u32 = db.edit_rows( condition_column, modified_column, condition, new_value )?;
             
@@ -338,7 +331,7 @@ pub fn execute_query(query: Query) -> Result<Either<Table, String>, DBError>{
         },
         Query::SORT(table, condition, column) => {
             let file_path = format!("{}/db_{table}.bin", &relation_directory);
-            let mut db = structures::table::load_database(&file_path)?;
+            let mut db = load_database(&file_path)?;
             
             db.sort_rows(condition, column)?;
 
@@ -346,7 +339,7 @@ pub fn execute_query(query: Query) -> Result<Either<Table, String>, DBError>{
         },
         Query::INDEX(table, column) => {
             let file_path = format!("{}/db_{table}.bin", &relation_directory);
-            let db = structures::table::load_database(&file_path)?;
+            let db = load_database(&file_path)?;
             db.index_column(column.clone())?;
             
             // save index

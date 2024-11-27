@@ -1,5 +1,0 @@
-make a clone of table.rows()
-
-add the data to the mergeNode
--> remove referencing and lifetimes! unless you can think of a bare way to deal with it
-
