@@ -43,6 +43,7 @@ impl Table {
     }
 
 
+    // TODO: implement a macro systm here: https://youtu.be/MWRPYBoCEaY?si=6oKpfNr2_QLeZJOx&t=125
     fn search_with_index(&self, index: BTreeMap<FieldValue, Vec<usize>>, criteria: FilterCondition) 
     -> Result<Vec<&HashMap<String, FieldValue>>, DBError> {
 
