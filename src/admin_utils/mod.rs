@@ -1,1 +1,0 @@
-// NOTE: this folder will be used as a library for details administrators of a database may want
