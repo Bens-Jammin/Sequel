@@ -1,0 +1,1 @@
+{"table_name":"filtered Sample Table","table_id":2,"total_pages":1,"free_pages":[1],"next_record_id":3,"columns":[{"name":"column A","data_type":"NUMBER","allows_nulls":true},{"name":"column B","data_type":"STRING","allows_nulls":false},{"name":"column C","data_type":"BOOLEAN","allows_nulls":false}],"indices":[],"next_page_id":1}
