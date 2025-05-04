@@ -7,7 +7,7 @@ pub fn main() {
     let t = Table::from_csv("C:/Users/benem/Downloads/csv71541.csv", dir).unwrap();
 
     println!("done parsing table!");
-    view( &t.name);
+    view( &t.name, true);
 
     // when making a table, add it to some c:/users/.../appdata/roaming/sequel folder (which is to be created if it doesn't exist)
     // then that can be called every time because we will know the path every time and no major path
