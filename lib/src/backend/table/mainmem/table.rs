@@ -1,18 +1,34 @@
-use std::{collections::HashMap, fs::{self, File}, io::{self, BufRead}, path::Path, sync::atomic::{AtomicU8, Ordering}};
+use std::{
+    collections::HashMap, 
+    fs::{self, File}, 
+    io::{self, BufRead}, 
+    path::Path, 
+    sync::atomic::{AtomicU8, Ordering}
+};
 
-use crate::backend::access::{
-    catalog::syscat::{self, init_syscat, read_syscat, ColumnMetaData, SystemCatalog}, data::{
-        page::{Page, PageReader}, 
-        record::Record, 
-        value::{ColumnType, FieldValue}
+use crate::{
+    backend::{
+        access::{
+            catalog::syscat::{
+                self, init_syscat, read_syscat, 
+                ColumnMetaData, SystemCatalog
+            }, 
+            data::{
+                page::{Page, PageReader}, 
+                record::Record, 
+                value::{ColumnType, FieldValue}
+            }, 
+        }, 
+        utils::files::{index_directory, pages_directory}
     }, 
+    table_directory
 };
 
 
 pub struct Table {
+    pub user: String,
     pub name: String,
-    pub table_dir: String,
-    syscat: SystemCatalog
+    pub(crate) syscat: SystemCatalog
 } 
 
 
@@ -23,67 +39,64 @@ pub struct Table {
 
 
 
-static PAGE_ID_COUNTER: AtomicU8 = AtomicU8::new(0);
-fn inc_next_page_id() -> u8     { PAGE_ID_COUNTER.fetch_add(1, Ordering::Relaxed) }
-fn next_page_id_to_get() -> u8  { PAGE_ID_COUNTER.load(Ordering::Relaxed) }
-fn reset_page_counter()         { PAGE_ID_COUNTER.store(0, Ordering::Relaxed); }
-
-static RECORD_ID_COUNTER: AtomicU8 = AtomicU8::new(0);
-fn inc_next_record_id() -> u8     { RECORD_ID_COUNTER.fetch_add(1, Ordering::Relaxed) }
-fn next_record_id_to_get() -> u8  { RECORD_ID_COUNTER.load(Ordering::Relaxed) }
-fn reset_record_counter()         { RECORD_ID_COUNTER.store(0, Ordering::Relaxed); }
-
 pub const NUMBER_OF_RECORDS_IN_BLOCK: usize = 1500;
 
 
 impl Table {
-    pub fn page_dir(&self)  -> String { format!("{}/{}/page", self.table_dir, self.name) }
-    pub fn index_dir(&self) -> String { format!("{}/{}/index", self.table_dir, self.name) }
-    pub fn table_datapath(&self) -> String {
-        let appdata_path = std::env::var("APPDATA").unwrap();
-        format!("{}/Sequel/data/{}", appdata_path, &self.name)
+    pub fn page_dir(&self)  -> String { pages_directory( &self.datapath() ) }
+    pub fn index_dir(&self) -> String { index_directory( &self.datapath() ) }
+    // users/appdata/sequel/users/<db_username>/<table_name>
+    pub fn datapath(&self) -> String {
+        format!("{}/{}", table_directory(&self.user), &self.name)
     }
+
+    pub fn number_of_rows(&self) -> u32 { self.syscat.next_record_id - 1 }
+    pub fn number_of_cols(&self) -> usize { self.syscat.columns.len() }
 }
 
-
-pub fn pages_directory(root: &str ) -> String { format!("{}/pages", root) }
-pub fn index_directory(root: &str ) -> String { format!("{}/index", root) }
-pub fn table_directory(name: &str ) -> String {     
-    let appdata_path = std::env::var("APPDATA").unwrap();
-    format!("{}/Sequel/data/{}", appdata_path, &name)
-}
 
 
 // ==================================================================
 //                            CREATION
 // ==================================================================
-impl Table {
-pub fn init(table_name: String, columns: Vec<(String, (ColumnType, bool))>, path_for_tables: String) -> Table {
-    
-    let appdata_path = std::env::var("APPDATA").unwrap();
-    let path_to_table_directory = format!("{}/Sequel/data/{}", appdata_path, &table_name);
 
+
+fn table_path(username: &str, name: &str) -> String {
+    format!("{}/{}", table_directory(username), name)
+}
+
+impl Table {
+pub fn init(username: String, table_name: String, columns: Vec<(String, (ColumnType, bool))>) -> Table {
+
+    // if user dir doesn't exit, create it
+    let userpath = table_directory(&username);
+    if !Path::new(&userpath).exists() {
+        match fs::create_dir_all(userpath) {
+            Ok(_) => { },
+            Err(e) => eprintln!("Failed to create directory: {}", e),
+        }
+    }
+
+    let path_to_table_directory = table_path(&username, &table_name);   
+    println!("created '{}'", &path_to_table_directory); 
     // if dir exists, delete it
     match fs::remove_dir_all( &path_to_table_directory ) {
         Ok(_) => (),
+        // if theres an error but it's a not found error, then there's nothing to delete
+        Err(e) if e.kind() == io::ErrorKind::NotFound => (),
         Err(e) => eprintln!("error clearing table dir: {e}")
     }
-
-
-    // setup folder in c:/users/.../appdata/roaming
-    let path = std::env::var("APPDATA").unwrap();
-    let _data_dir = format!("{}/Sequel/data/{}", path, &table_name);
 
     // setup folders
     fs::create_dir_all( &path_to_table_directory ).expect("Unable to create table folder");
     fs::create_dir( pages_directory(&path_to_table_directory) ).expect("Unable to create page folder for table");
     fs::create_dir( index_directory(&path_to_table_directory) ).expect("Unable to create index folder for table");
-    init_syscat(&table_name, &columns, path_to_table_directory.clone());
+    init_syscat(&username, &table_name, &columns, path_to_table_directory.clone());
 
     let syscat = read_syscat( &path_to_table_directory ).unwrap();
     Table {
+        user: username,
         name: table_name,
-        table_dir: path_for_tables,
         syscat
     }
 }
@@ -193,66 +206,105 @@ fn insert_record(table_name: &str, data: Record, syscat: &mut SystemCatalog) {
 //                            READING
 // ==================================================================
 
+impl Table {
+    pub fn load(name: &str) -> Option<Table> {
+        
+        let dir = table_directory(name);
+        let dir_existence = std::fs::exists(&dir);
 
-pub fn load_blocks_from_start(table_name: &str, dir: &str) -> [Option<Record>; NUMBER_OF_RECORDS_IN_BLOCK] {
-    reset_page_counter();
-    reset_record_counter();
-    load_next_block(table_name, dir)
+        // make sure the directory exists if `fs::exists` returns either an error or `false`
+        if dir_existence.is_err() || !(dir_existence.unwrap()) { return None }
+
+        let syscat = read_syscat(&dir).unwrap();
+
+        Some(Table {
+            user: syscat.username.to_string(),
+            name: name.to_string(),
+            syscat
+        })
+        
+    }
 }
 
 
-/// reads the next block of records in a page
-/// <b>param:</b> `table_name` (&str) : the name of the table to read from </br>
-/// <b>param:</b> `dir` (&str) : the root directory of the table </br>
-/// <b>returns:</b> an array of size `NUMBER_OF_RECORDS_IN_BLOCK`. Contents of the array are all otional records, in case the size of the array is bigger than the number of records remaining </br>
-pub fn load_next_block(table_name: &str, dir: &str) -> [Option<Record>; NUMBER_OF_RECORDS_IN_BLOCK] { 
+pub struct BlockLoader {
+    page_ctr: u8,
+    record_ctr: u8
+}
 
-    let mut records: [Option<Record>; NUMBER_OF_RECORDS_IN_BLOCK] = std::array::from_fn(|_| None);
-    let mut count = 0;
 
-    let number_of_pages_in_table = read_syscat(dir).unwrap().total_pages;
+impl BlockLoader {
 
-    // no blocks to load if there aren't any pages
-    if number_of_pages_in_table == 0 { return records; }
+    pub fn new() -> Self { Self { page_ctr: 0, record_ctr: 0 }  }
 
-    // if the counter hasn't been reset, do so and start from the beginning
-    if number_of_pages_in_table <= next_page_id_to_get() as u16 { 
-        reset_page_counter(); 
-        reset_record_counter(); 
-        return load_blocks_from_start(table_name, dir)
+    pub fn load_blocks_from_start(&mut self, table_name: &str, dir: &str) -> [Option<Record>; NUMBER_OF_RECORDS_IN_BLOCK] {
+        self.page_ctr = 0;
+        self.record_ctr = 0;
+        self.load_next_block(table_name, dir)
     }
 
 
-    let mut iter = PageReader::init(&table_name, dir);
+    fn inc_next_page_id(&mut self) -> u8 { self.page_ctr += 1; self.page_ctr }
+    fn next_page_id_to_get(&self) -> u8  { self.page_ctr }
+    fn reset_page_counter(&mut self)     { self.page_ctr = 0; }
 
-    let _ = match iter.next() {
-        Some(p) => p,
-        None => { reset_page_counter(); return records }
-    };
-    iter.reset();
+    fn inc_next_record_id(&mut self) -> u8 { self.record_ctr += 1; self.record_ctr }
+    fn next_record_id_to_get(&self) -> u8  { self.record_ctr }
+    fn reset_record_counter(&mut self)     { self.record_ctr = 0; }
 
 
-    while let Some(page) = iter.next() {
-        if page.id() < next_page_id_to_get() { continue; }
-        if let Some(page_records) = page.all_records_in() {
-            for record in page_records {
-                if record.id() < next_record_id_to_get() { continue; }
-                if count >= NUMBER_OF_RECORDS_IN_BLOCK {
-                    return records;
-                }
-                records[count] = Some(record);
-                count += 1;
-                inc_next_record_id();
-            }
+    /// reads the next block of records in a page
+    /// <b>param:</b> `table_name` (&str) : the name of the table to read from </br>
+    /// <b>param:</b> `dir` (&str) : the root directory of the table </br>
+    /// <b>returns:</b> an array of size `NUMBER_OF_RECORDS_IN_BLOCK`. Contents of the array are all otional records, in case the size of the array is bigger than the number of records remaining </br>
+    pub fn load_next_block(&mut self, table_name: &str, dir: &str) -> [Option<Record>; NUMBER_OF_RECORDS_IN_BLOCK] { 
+
+        let mut records: [Option<Record>; NUMBER_OF_RECORDS_IN_BLOCK] = std::array::from_fn(|_| None);
+        let mut count = 0;
+
+        let number_of_pages_in_table = read_syscat(dir).unwrap().total_pages;
+
+        // no blocks to load if there aren't any pages
+        if number_of_pages_in_table == 0 { return records; }
+
+        // if the counter hasn't been reset, do so and start from the beginning
+        if number_of_pages_in_table <= self.next_page_id_to_get() as u16 { 
+            self.page_ctr = 0;
+            self.record_ctr = 0;
+            return self.load_blocks_from_start(table_name, dir)
         }
-        reset_record_counter();
-        inc_next_page_id();
+
+
+        let mut iter = PageReader::init(&table_name, dir);
+
+        let _ = match iter.next() {
+            Some(p) => p,
+            None => { self.reset_page_counter(); return records }
+        };
+        iter.reset();
+
+
+        while let Some(page) = iter.next() {
+            if page.id() < self.next_page_id_to_get() { continue; }
+            if let Some(page_records) = page.all_records_in() {
+                for record in page_records {
+                    if record.id() < self.next_record_id_to_get() { continue; }
+                    if count >= NUMBER_OF_RECORDS_IN_BLOCK {
+                        return records;
+                    }
+                    records[count] = Some(record);
+                    count += 1;
+                    self.inc_next_record_id();
+                }
+            }
+            self.reset_record_counter();
+            self.inc_next_page_id();
+        }
+
+
+        records
     }
-
-
-    records
 }
-
 
 pub fn get_record(_record_id: usize) -> Option<Record> {
     // returns the record with the given id
@@ -336,8 +388,7 @@ pub fn filter_table(&mut self, col: &str, condition: Condition ) -> Table {
         .collect::<Vec<(String, (ColumnType, bool))>>();
 
     let _number_of_rows_remaining = accepted_records.len();
-    let dir = &self.table_datapath();
-    let mut filtered_table = Table::init( String::from(&new_name), columns_for_syscat, dir.clone() ); 
+    let mut filtered_table = Table::init(self.user.to_string(), String::from(&new_name), columns_for_syscat ); 
 
     filtered_table.bulk_insert_records(accepted_records);
     // number_of_rows_remaining
@@ -355,6 +406,36 @@ fn generate_new_name(table: &str) -> String {
 //                            SORTING
 // ==================================================================
 
+pub const ASCENDING: bool = true;
+pub const DESCENDING: bool = false; 
+
+impl Table {
+
+    /// sort the table on a column, for a given condition. Direction should be true for ascending
+    pub fn sort(&self, col: &str, _asc: bool ) {
+    
+        let col_type = self
+            .syscat
+            .columns
+            .iter()
+            .filter( |v| 
+                v.name == col
+            )
+            .collect::<Vec<&ColumnMetaData>>()
+            .get(0) // only sort on the first col with that name
+            .unwrap()
+            .data_type;
+
+
+        // https://en.wikipedia.org/wiki/External_sorting
+        match col_type {    // TODO: use macros here? 
+            ColumnType::NUMBER => todo!(),
+            ColumnType::FLOAT => todo!(),
+            ColumnType::STRING => todo!(),
+            ColumnType::BOOLEAN => todo!(),
+        }
+    }
+}
 
 // ...
 
@@ -367,7 +448,7 @@ fn generate_new_name(table: &str) -> String {
 
 impl Table{
 
-pub fn  from_csv(path: &str, save_location: &str) -> Option<Table> {
+pub fn from_csv(username: String, path: &str) -> Option<Table> {
 
     let file: File = File::open(path).ok()?;
     let reader = io::BufReader::new(file);
@@ -376,7 +457,7 @@ pub fn  from_csv(path: &str, save_location: &str) -> Option<Table> {
         .to_str()?
         .replace(".csv", "");
 
-    let mut table = Table::init(table_name.to_owned(), Vec::new(), save_location.to_owned() );
+    let mut table = Table::init(username, table_name.to_owned(), Vec::new() );
 
     
     // populating the new
@@ -394,7 +475,8 @@ pub fn  from_csv(path: &str, save_location: &str) -> Option<Table> {
         if i == 0 {
             header_row.extend(cells.clone());
             for cell in cells {
-                inferred_types.insert( String::from(cell), None );
+                let formatted_name = cell.trim().replace('"', "");
+                inferred_types.insert( String::from(formatted_name), None );
             }
         // otherwise...
         } else {
@@ -493,6 +575,7 @@ pub struct TableIterator<'a> {
     index: u64,
     path_to_table: String,
 
+    loader: BlockLoader,
     buf_index: usize,
     buf: [Option<Record>; NUMBER_OF_RECORDS_IN_BLOCK]
 }
@@ -500,9 +583,10 @@ pub struct TableIterator<'a> {
 
 impl<'a> TableIterator<'a> {
     pub fn init(tablename: &'a String) -> Self {
+        let loader = BlockLoader::new();
         let path_to_table = table_directory(&tablename);
         let buffer: [Option<Record>; NUMBER_OF_RECORDS_IN_BLOCK] = std::array::from_fn(|_| None);
-        Self { tablename, index: 0, buf_index: 0, buf: buffer, path_to_table }
+        TableIterator { tablename, index: 0, loader, buf_index: 0, buf: buffer, path_to_table }
     }   
 
     pub fn index(&self) -> u64 { self.index }
@@ -517,7 +601,7 @@ impl<'a> Iterator for TableIterator<'a> {
         
         // load fresh data if there's nothing yet or you've exhausted the current batch
         if self.buf_index == 0 || self.buf_index >= NUMBER_OF_RECORDS_IN_BLOCK { 
-            self.buf = load_next_block( &self.tablename, &self.path_to_table );
+            self.buf = self.loader.load_next_block( &self.tablename, &self.path_to_table );
             self.buf_index = 0;
         }
 

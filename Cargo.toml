@@ -1,27 +1,2 @@
-[package]
-name = "sequel"
-version = "0.2.0"
-edition = "2021"
-build = "build.rs"
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-
-[build-dependencies]
-dirs = "6.0.0"
-
-
-[dependencies]
-bincode = "2.0.1"
-serde = { version = "1.0.219", features = ["derive"] }
-serde_derive = "1.0.219"
-serde_json = "1.0.140"
-comfy-table = "7.1.4"
-chrono = { version = "0.4.40", features = ["serde"] }
-rand = "0.9.0"
-url = "2.5.4"
-bplustree = "0.1.0"
-rust_xlsxwriter = "0.85.0"
-colored = "3.0"
-tempdir = "0.3"
-mockall = "0.13"
-regex = "1.11.1"
+[workspace]
+members = ["cli", "lib"]

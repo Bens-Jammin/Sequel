@@ -9,27 +9,5 @@ It's called Sequel because a lot of the major design ideas (query names, etc) we
 ## How to Implement 
 add to your `cargo.toml` file under the "dependencies" section the following:
 ```
-sequel = "0.2.0"
+sequel = "0.3.0"
 ```
-
-## Available Operations
-
-### CREATE
-
-### INSERT
-
-### EDIT
-
-### DELETE
-
-### SELECT
-
-### PROJECT
-
-### SORT
-
-### INDEX
-
-## RUNTIMES
-scan runtime = O(n^2)
-index runtime = O(n)

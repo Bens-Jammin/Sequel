@@ -49,6 +49,7 @@ pub struct IndexMetaData {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SystemCatalog {
+    pub username: String,
     pub data_dir: String,
     pub table_name: String,
     pub table_id: u16,
@@ -66,7 +67,7 @@ pub struct SystemCatalog {
 /// iniitalizes a system catalog. Each table has its own unique system catalog
 /// Using a nested tuple instead of a hashmap to maintain order in the columns
 /// TODO: use a hash map eventually but maintaining column order?
-pub fn init_syscat(table_name: &str, column_data: &Vec<(String, (ColumnType, bool))>, data_dir: String ) {
+pub fn init_syscat(username: &str, table_name: &str, column_data: &Vec<(String, (ColumnType, bool))>, data_dir: String ) {
 
     let file_path = format!( "{}/syscat.txt", &data_dir );
     let file = File::create( file_path ).unwrap();
@@ -74,6 +75,7 @@ pub fn init_syscat(table_name: &str, column_data: &Vec<(String, (ColumnType, boo
     let indexes: Vec<IndexMetaData> = collect_index_data( &table_name, &data_dir ).expect("failed to load data about table indices.");
     
     let syscat = SystemCatalog {
+        username: username.to_string(), 
         data_dir,
         table_name: table_name.to_string(),
         table_id: next_table_id(),
@@ -161,9 +163,9 @@ pub fn read_syscat(data_dir: &str) -> Result<SystemCatalog, String> {
 
     let syscat_path = format!("{}/syscat.txt", data_dir);
     let mut file = fs::OpenOptions::new()
-    .read(true)
-    .open( syscat_path )
-    .unwrap();
+        .read(true)
+        .open( syscat_path )
+        .unwrap();
 
     let mut contents = String::new();
     file.read_to_string(&mut contents).unwrap();

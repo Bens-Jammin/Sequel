@@ -13,7 +13,7 @@ pub enum FieldValue {
 }
 
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub enum ColumnType {
     NUMBER,
     FLOAT,

@@ -15,10 +15,10 @@ use crate::backend::{
         read_syscat, 
         update_syscat_on_disk
     }, 
-    table::mainmem::table::{
-        pages_directory, 
-        table_directory
-    }, utils::binary::{u16_to_u8, u8_to_u16}
+    utils::{
+        binary::{u16_to_u8, u8_to_u16},
+        files::{pages_directory,table_directory}
+    }
 };
 use super::record::Record;
 

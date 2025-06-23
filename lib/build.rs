@@ -1,4 +1,6 @@
 /// This file is used to grab config files from the other projects which use this database
+/// Note: revisit this ?
+
 use std::{env, fs};
 use std::fs::File;
 use std::io::Write;
