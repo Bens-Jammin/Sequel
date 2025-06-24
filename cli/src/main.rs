@@ -1,12 +1,12 @@
 use std::io::{self, Write};
 
-// use sequel;
+use sequel::{backend::table, table::all_tables_for, ColumnType, Table};
 use clap::{Parser, Subcommand};
 
 // cargo install --path .
 
 #[derive(Parser)]
-#[command(name = "s2l")]
+#[command(name = "sequel")]
 #[command(about = "a CLI for easy access to the sequel database")]
 struct CLI {
     /// Login to a pre-existing user
@@ -22,7 +22,7 @@ struct CLI {
 
 // Add this new CLI struct for interactive mode
 #[derive(Parser)]
-#[command(name = "s2l")]
+#[command(name = "sequel")]
 #[command(about = "Available commands:")]
 #[command(override_usage = "<COMMAND> <ARGS>")]
 struct InteractiveCLI {
@@ -86,7 +86,7 @@ impl AppState {
 fn main() {
 
     let cli = CLI::parse();
-
+    
     if cli.Login {
         print!("Enter username: ");
         io::stdout().flush().unwrap(); 
@@ -109,7 +109,6 @@ fn main() {
         println!("!! NOT IMPLEMENTED YET !!");
     }
 
-
 }
 
 fn interact(mut state: AppState) {
@@ -117,8 +116,8 @@ fn interact(mut state: AppState) {
     loop {
         let prompt = if let Some(user) = state.user() {
             let mode = if user.is_admin { "#" } else { "" };
-            format!("{}@s2l>{} ", user.username, mode)
-        } else { "s2l> ".to_string() };
+            format!("{}@sequel>{} ", user.username, mode)
+        } else { "sequel> ".to_string() };
           print!("{prompt}");
         io::stdout().flush().unwrap();
         
@@ -130,7 +129,7 @@ fn interact(mut state: AppState) {
 
                 match input {
                     "help" => {
-                        if let Err(e) = InteractiveCLI::try_parse_from(vec!["s2l", "--help"]) {
+                        if let Err(e) = InteractiveCLI::try_parse_from(vec!["sequel", "--help"]) {
                             println!("{e}")
                         }
                         continue;
@@ -142,7 +141,7 @@ fn interact(mut state: AppState) {
                 let args: Vec<&str> = input.split_whitespace().collect();
                 if args.is_empty() { continue; }
 
-                let mut full_args = vec!["s2l"];
+                let mut full_args = vec!["sequel"];
                 full_args.extend(args);
                 match InteractiveCLI::try_parse_from(full_args) {
                     Ok(cli) => {
@@ -160,21 +159,37 @@ fn interact(mut state: AppState) {
 }
 
 
+macro_rules! guarantee_login {
+    ($state: expr) => {
+        if !$state.is_logged_in() {
+            eprintln!("Error: You must be logged in to access the database!"); return false;
+        }
+    };
+}
+
+
+
+
 fn handle(cmd: InteractiveCommand , state: &mut AppState) -> bool {
+
+    
+
     match cmd {
         InteractiveCommand::Grab { database, window } => {
-            if !state.is_logged_in() {
-                eprintln!("Error: Must be signed in to grab a database."); return false;
-            }
+            guarantee_login!(state);
+            
+            let _db = Table::load( &state.user().unwrap().username, &database ).unwrap();
             println!("!TODO! : Need to implement database retrieval!");
             false
         },
         InteractiveCommand::List => {
-            if !state.is_logged_in() {
-                eprintln!("Error: You must be logged in to list databases"); return false;
-            }
+            guarantee_login!(state);
+            
 
-            println!("!TODO! : Need to implement database retrieval for list command! (maybe throw in sysconfig for admin too?");
+            let result = String::from("- ") + &all_tables_for(&state.user().unwrap().username).join("\n- ");
+            println!("{}", result);
+
+            // println!("!TODO! : Need to implement database retrieval for list command! (maybe throw in sysconfig for admin too?");
             false
         },
         InteractiveCommand::Whoami => {
@@ -188,7 +203,6 @@ fn handle(cmd: InteractiveCommand , state: &mut AppState) -> bool {
         },
         InteractiveCommand::Logout => {
             if state.is_logged_in() {
-                let username = state.user().unwrap().username.clone();
                 state.logout();
                 println!("Logged out successfully");
             } else {
@@ -199,3 +213,5 @@ fn handle(cmd: InteractiveCommand , state: &mut AppState) -> bool {
         InteractiveCommand::Exit => { println!("Exiting..."); true },
     }
 }
+
+

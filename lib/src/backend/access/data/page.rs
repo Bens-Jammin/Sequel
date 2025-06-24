@@ -17,7 +17,7 @@ use crate::backend::{
     }, 
     utils::{
         binary::{u16_to_u8, u8_to_u16},
-        files::{pages_directory,table_directory}
+        files::pages_directory
     }
 };
 use super::record::Record;
@@ -246,9 +246,11 @@ impl Page {
     
 
 
-    /// Flushes the page to disc
-    pub fn flush_to_disk(&self, table_name: &str, _path: &str) {
-        let file_path = path_to_page( &table_directory(table_name), self.id());
+    /// Flushes the page to disk
+    /// ## NOTE
+    /// the path must be the TABLE path: .../sequel/users/<username>/<tablename>
+    pub fn flush_to_disk(&self, _table_name: &str, path: &str) {
+        let file_path = path_to_page( path, self.id());
         let mut file = OpenOptions::new()
             .create(true)
             .read(true)
@@ -260,10 +262,10 @@ impl Page {
     }
 
 
-
-    pub fn write_to_disc(&mut self, record: Record, table_name: &str) {
-        let table_dir = table_directory(table_name);
-        let mut syscat = read_syscat(&table_dir).unwrap();
+    /// ## NOTE
+    /// the path must be the TABLE path: .../sequel/users/<username>/<tablename>
+    pub fn write_to_disk(&mut self, record: Record, table_name: &str, path: &str) {
+        let mut syscat = read_syscat(&path).unwrap();
         
         if syscat.free_pages.len() == 0 { // add the first page
             syscat.free_pages.push(self.id());
@@ -290,11 +292,14 @@ impl Page {
     /// <b>param:</b> `dir_to_table` (&str) : the root of the directory which contains all the tables data. Should be in the form `appdata/roaming/<table_name>` </br>
     /// 
     /// <b>returns:</b> Option<Page> : the page if there are no i/o failures
-    pub fn read_page(page_id: u8, table_name: &str, _dir_to_table: &str) -> Option<Page> {
+    /// 
+    /// ## NOTE
+    /// the path must be the TABLE path: .../sequel/users/<username>/<tablename>
+    pub fn read_page(page_id: u8, table_name: &str, path: &str) -> Option<Page> {
         // 0 isn't a valid index for this. earliest page is stored as an unisigned integer in the syscat
         if page_id == 0 { return None }
         
-        let file_path = path_to_page( &table_directory(table_name), page_id );
+        let file_path = path_to_page( path, page_id );
         let file = OpenOptions::new()
             .read(true)
             .open( 

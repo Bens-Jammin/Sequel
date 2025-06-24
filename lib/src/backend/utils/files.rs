@@ -21,11 +21,15 @@ pub fn clear_dir<P: AsRef<Path>>(path: P) -> io::Result<()> {
 
 pub fn pages_directory(root: &str ) -> String { format!("{}/pages", root) }
 pub fn index_directory(root: &str ) -> String { format!("{}/index", root) }
-// users/appdata/sequel/users/<db_username>
-pub fn table_directory(name: &str ) -> String {     
-    format!("{}/users/{}", database_dir(), &name)
+/// .../appdata/sequel/users/<db_username>
+pub fn user_directory(username: &str ) -> String {     
+    format!("{}/users/{}", database_dir(), &username)
 }
-pub fn table_pages_dir(table_name: &str) -> String { pages_directory(&table_directory(table_name)) }
-pub fn table_index_dir(table_name: &str) -> String { index_directory(&table_directory(table_name)) }
+pub fn table_directory(username: &str, table_name: &str) -> String {
+    format!("{}/users/{}/{}",database_dir(), username, table_name)
+}
+
+pub fn table_pages_dir(table_name: &str) -> String { pages_directory(&user_directory(table_name)) }
+pub fn table_index_dir(table_name: &str) -> String { index_directory(&user_directory(table_name)) }
 // users/appdata/sequel
 pub fn database_dir() -> String { format!("{}/Sequel", std::env::var("APPDATA").unwrap()) }

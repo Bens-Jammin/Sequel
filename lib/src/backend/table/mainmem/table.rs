@@ -19,15 +19,14 @@ use crate::{
                 value::{ColumnType, FieldValue}
             }, 
         }, 
-        utils::files::{index_directory, pages_directory}
+        utils::files::{index_directory, pages_directory, user_directory}
     }, 
-    table_directory
 };
 
 
 pub struct Table {
-    pub user: String,
-    pub name: String,
+    pub(crate) user: String,
+    pub(crate) name: String,
     pub(crate) syscat: SystemCatalog
 } 
 
@@ -43,11 +42,11 @@ pub const NUMBER_OF_RECORDS_IN_BLOCK: usize = 1500;
 
 
 impl Table {
-    pub fn page_dir(&self)  -> String { pages_directory( &self.datapath() ) }
-    pub fn index_dir(&self) -> String { index_directory( &self.datapath() ) }
+    pub fn page_dir(&self)  -> String { pages_directory( &self.tablepath() ) }
+    pub fn index_dir(&self) -> String { index_directory( &self.tablepath() ) }
     // users/appdata/sequel/users/<db_username>/<table_name>
-    pub fn datapath(&self) -> String {
-        format!("{}/{}", table_directory(&self.user), &self.name)
+    pub fn tablepath(&self) -> String {
+        format!("{}/{}", user_directory(&self.user), &self.name)
     }
 
     pub fn number_of_rows(&self) -> u32 { self.syscat.next_record_id - 1 }
@@ -62,14 +61,14 @@ impl Table {
 
 
 fn table_path(username: &str, name: &str) -> String {
-    format!("{}/{}", table_directory(username), name)
+    format!("{}/{}", user_directory(username), name)
 }
 
 impl Table {
 pub fn init(username: String, table_name: String, columns: Vec<(String, (ColumnType, bool))>) -> Table {
 
     // if user dir doesn't exit, create it
-    let userpath = table_directory(&username);
+    let userpath = user_directory(&username);
     if !Path::new(&userpath).exists() {
         match fs::create_dir_all(userpath) {
             Ok(_) => { },
@@ -142,13 +141,13 @@ pub fn insert_row(&mut self, row: Vec<FieldValue>) -> &mut Self {
         self.syscat.next_record_id += 1;
         self.syscat.next_page_id += 1;
         self.syscat.free_pages.push( p.id() );
-        p.write_to_disc(data, &self.name);
+        p.write_to_disk(data, &self.name, &self.syscat.data_dir);
         return self;
     }
     
     let free_page_id = self.syscat.free_pages[0];
     let mut page = Page::read_page(free_page_id, &self.name, &self.page_dir()).unwrap();
-    page.write_to_disc(data, &self.name);
+    page.write_to_disk(data, &self.name, &self.tablepath());
     if page.is_full() {
         // remove page id from syscat
         self.syscat.free_pages.remove(
@@ -173,11 +172,11 @@ pub fn bulk_insert_records(&mut self, rows: Vec<Record>) -> &mut Self {
 
 fn insert_record(table_name: &str, data: Record, syscat: &mut SystemCatalog) {
 
-    let page_dir = pages_directory( &table_directory(table_name) );
+    let page_dir = pages_directory( &syscat.data_dir );
 
     if (syscat.total_pages == 0) || syscat.free_pages.len() == 0 {
         let mut p = Page::new( syscat.next_page_id );
-        p.write_to_disc( data, table_name );
+        p.write_to_disk( data, table_name, &syscat.data_dir );
         syscat.total_pages += 1;
         syscat.next_record_id += 1;
         syscat.next_page_id += 1;
@@ -187,7 +186,7 @@ fn insert_record(table_name: &str, data: Record, syscat: &mut SystemCatalog) {
 
     let free_page_id = syscat.free_pages[0];
     let mut page = Page::read_page(free_page_id, table_name, &page_dir ).unwrap();
-    page.write_to_disc(data, table_name );
+    page.write_to_disk(data, table_name, &syscat.data_dir );
     if page.is_full() {
         // remove page id from syscat
         syscat.free_pages.remove(
@@ -207,9 +206,9 @@ fn insert_record(table_name: &str, data: Record, syscat: &mut SystemCatalog) {
 // ==================================================================
 
 impl Table {
-    pub fn load(name: &str) -> Option<Table> {
+    pub fn load(username: &str, table: &str) -> Option<Table> {
         
-        let dir = table_directory(name);
+        let dir = table_path(username, table);
         let dir_existence = std::fs::exists(&dir);
 
         // make sure the directory exists if `fs::exists` returns either an error or `false`
@@ -219,11 +218,31 @@ impl Table {
 
         Some(Table {
             user: syscat.username.to_string(),
-            name: name.to_string(),
+            name: username.to_string(),
             syscat
         })
         
     }
+}
+
+
+pub fn all_tables_for(username: &str) -> Vec<String> {
+
+    let dir = fs::read_dir(user_directory(username)).unwrap();
+
+    let mut tables: Vec<String> = Vec::new();
+
+    for table in dir {
+        tables.push( 
+            table
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .to_string() 
+        );
+    }
+
+    tables
 }
 
 
@@ -364,7 +383,7 @@ pub fn filter_table(&mut self, col: &str, condition: Condition ) -> Table {
             c.name == col
         ).unwrap();
 
-    for mut record in TableIterator::init( &self.name ) {
+    for mut record in TableIterator::init( &self.user, &self.name ) {
         let cell_value = record.data_immut()[column_index_in_record].clone();
         
         if evaluate_condition(&condition, &cell_value) {
@@ -582,9 +601,9 @@ pub struct TableIterator<'a> {
 
 
 impl<'a> TableIterator<'a> {
-    pub fn init(tablename: &'a String) -> Self {
+    pub fn init(tablename: &'a String, username: &'a String) -> Self {
         let loader = BlockLoader::new();
-        let path_to_table = table_directory(&tablename);
+        let path_to_table = table_path(&username, &tablename);
         let buffer: [Option<Record>; NUMBER_OF_RECORDS_IN_BLOCK] = std::array::from_fn(|_| None);
         TableIterator { tablename, index: 0, loader, buf_index: 0, buf: buffer, path_to_table }
     }   

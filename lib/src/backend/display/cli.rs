@@ -3,9 +3,9 @@ use std::io::Write;
 use crate::{
     backend::{
         access::catalog::syscat::read_syscat, 
-        table::mainmem::table::TableIterator
+        table::mainmem::table::TableIterator, utils::files::table_directory
     }, 
-    table_directory, 
+     
     Table
 };
 
@@ -13,9 +13,9 @@ use crate::{
 const ASCII_TABLE_FORMAT: &str = "     ══            "; // header sep only 
 
 /// disable column types removed the <TYPE> for each header of the table 
-pub fn view(table_name: &str, disable_column_types: bool, minimum: usize, maximum: usize) {
+pub fn view(username: &str, table_name: &str, disable_column_types: bool, minimum: usize, maximum: usize) {
 
-    let path_to_table = table_directory( table_name );
+    let path_to_table = table_directory( username, table_name );
     let syscat = read_syscat(&path_to_table).unwrap();
     let mut text_table = comfy_table::Table::new();
     let mut header_row: Vec<comfy_table::Cell> = Vec::new();
@@ -32,7 +32,8 @@ pub fn view(table_name: &str, disable_column_types: bool, minimum: usize, maximu
     text_table.set_header(header_row);
 
     let iterator_name = String::from(table_name);
-    let table_iterator = TableIterator::init( &iterator_name );
+    let usr = username.to_string();
+    let table_iterator = TableIterator::init( &iterator_name, &usr );
     
     for (idx,record) in table_iterator.enumerate() {
         if idx < minimum || idx > maximum { continue; }  
@@ -67,7 +68,7 @@ impl Table {
         text_table.set_header(header_row);
 
         let iterator_name = String::from(&self.name);
-        let table_iterator = TableIterator::init( &iterator_name );
+        let table_iterator = TableIterator::init( &iterator_name, &self.user );
         
         for (idx, record) in table_iterator.enumerate() {
             
