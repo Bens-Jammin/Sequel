@@ -178,7 +178,7 @@ impl FieldValue {
 
     pub fn parse(obj: &str) -> FieldValue {
         
-        let cleaned_obj = obj.trim().to_ascii_uppercase(); 
+        let cleaned_obj = obj.trim().to_ascii_lowercase(); 
         
         if cleaned_obj == "true" { return FieldValue::BOOL(true) }
         if cleaned_obj == "false" { return FieldValue::BOOL(false) }

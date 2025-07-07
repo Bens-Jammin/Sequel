@@ -1,6 +1,6 @@
 use std::io::{self, Write};
 
-use sequel::{backend::table, table::all_tables_for, ColumnType, Table};
+use sequel::{table::all_tables_for, ColumnType, FieldValue, Table};
 use clap::{Parser, Subcommand};
 
 // cargo install --path .
@@ -11,11 +11,11 @@ use clap::{Parser, Subcommand};
 struct CLI {
     /// Login to a pre-existing user
     #[arg(long)]
-    Login: bool,
+    login: bool,
 
     /// Signup as a new user
     #[arg(long)]
-    Signup: bool
+    signup: bool
 
 }
 
@@ -34,22 +34,50 @@ struct InteractiveCLI {
 #[derive(Subcommand)]
 enum InteractiveCommand {
     /// Grab a database (requires login)
+    #[command(short_flag='g')]
     Grab {
         /// Database name to grab
         #[arg(short, long)]
-        database: String,
+        table: String,
         /// Number of rows to return
         #[arg(short, long, default_value = "25")]
         window: u32,
     },
     /// List available databases
-    List,
+    List {
+        /// Lists all databases for all tables
+        #[arg(short, long)]
+        all: bool,
+        
+        /// adds detail to the listed tables (row/col count, indexes, etc)
+        #[arg(short, long)]
+        verbose: bool
+    },
     /// Show current user info
     Whoami,
+    /// Creates a new table under the user
+    Make {
+        #[arg(short, long)]
+        name: String,
+
+        columns: String
+    },
+    /// add a row into the table
+    Insert {
+        ///Table the row is being inserted into
+        #[arg(short, long, value_name="TABLE NAME")]
+        table: String,
+        
+        /// comma separated values for the data you want in the row 
+        #[arg(short, long, value_name="ROW DATA")]
+        data: String
+    },
     /// Logout
     Logout,
+    /// Login
+    Login,
     /// Exit the CLI
-    Exit
+    Quit
 }
 
 
@@ -79,15 +107,49 @@ impl AppState {
     fn is_logged_in(&self) -> bool { self.user.is_some() }
 
     fn user(&self) -> Option<&UserSession> { self.user.as_ref() }
+    
+    /// returns false if the user is not an admin or no one is logged in
+    fn isadmin(&self) -> bool { match &self.user { Some(u) => u.is_admin, None => false }  }
+}
 
+
+#[allow(unused)]
+fn test_insert() {
+
+    let mut t = Table::init("admin".to_string(), "TestTable".to_string(), vec![
+        ("A".to_string(), (ColumnType::STRING , false)),
+        ("B".to_string(), (ColumnType::NUMBER , false)),
+        ("C".to_string(), (ColumnType::BOOLEAN, false)),
+    ]);
+
+    t.insert_row(vec![
+        FieldValue::STRING(String::new()),
+        FieldValue::NUMBER(100),
+        FieldValue::BOOL(true)
+    ]);
+
+    t.insert_row(vec![
+        FieldValue::STRING(String::new()),
+        FieldValue::NUMBER(100),
+        FieldValue::BOOL(true)
+    ]);
+
+    t.insert_row(vec![
+        FieldValue::STRING(String::new()),
+        FieldValue::NUMBER(100),
+        FieldValue::BOOL(true)
+    ]);
+    println!("{}",t.as_string(0, 10));
 }
 
 
 fn main() {
 
+    test_insert();
+    // cargo run -- --login
     let cli = CLI::parse();
-    
-    if cli.Login {
+
+    if cli.login {
         print!("Enter username: ");
         io::stdout().flush().unwrap(); 
         
@@ -105,14 +167,14 @@ fn main() {
                     println!("error logging in!: {e}");
                 },
             }
-    } else if cli.Signup {
+    } else if cli.signup {
         println!("!! NOT IMPLEMENTED YET !!");
     }
 
 }
 
 fn interact(mut state: AppState) {
-    println!("Welcome to the Sequel database CLI!");
+    println!("Welcome to the Sequel database CLI Version 0.5!");
     loop {
         let prompt = if let Some(user) = state.user() {
             let mode = if user.is_admin { "#" } else { "" };
@@ -134,7 +196,7 @@ fn interact(mut state: AppState) {
                         }
                         continue;
                     }
-                    "exit" | "quit" => { break; }
+                    "quit" => { break; }
                     _ => { }
                 }
 
@@ -145,7 +207,7 @@ fn interact(mut state: AppState) {
                 full_args.extend(args);
                 match InteractiveCLI::try_parse_from(full_args) {
                     Ok(cli) => {
-                        if !handle(cli.command, &mut state) { break; }
+                        if handle(cli.command, &mut state) { break; }
                     },
                     Err(e) => eprintln!("{e}")
                 }
@@ -172,46 +234,81 @@ macro_rules! guarantee_login {
 
 fn handle(cmd: InteractiveCommand , state: &mut AppState) -> bool {
 
-    
-
     match cmd {
-        InteractiveCommand::Grab { database, window } => {
-            guarantee_login!(state);
-            
-            let _db = Table::load( &state.user().unwrap().username, &database ).unwrap();
-            println!("!TODO! : Need to implement database retrieval!");
-            false
-        },
-        InteractiveCommand::List => {
-            guarantee_login!(state);
-            
+        InteractiveCommand::Grab { table, window } => {
+                        guarantee_login!(state);
+                
+                        let db = Table::load( &state.user().unwrap().username, &table ).unwrap();
+                        println!("{}",db.as_string(0, window as usize));
+                        false
+            },
+        InteractiveCommand::List { all, verbose } => {
+                guarantee_login!(state);
 
-            let result = String::from("- ") + &all_tables_for(&state.user().unwrap().username).join("\n- ");
-            println!("{}", result);
+                // maintain administrative control
+                if all && !state.isadmin() { println!("ERROR: 'all' is an admin only flag!"); return false; }
+                if verbose && !state.isadmin() { println!("ERROR: 'verbose' is an admin only flag!"); return false; }
 
-            // println!("!TODO! : Need to implement database retrieval for list command! (maybe throw in sysconfig for admin too?");
-            false
-        },
+                let result = String::from("- ") + &all_tables_for(&state.user().unwrap().username).join("\n- ");
+                println!("{}", result);
+
+                false
+            },
         InteractiveCommand::Whoami => {
-            if let Some(user) = state.user() {
-                let admin_state = if user.is_admin {"(admin)"} else {""};
-                println!("Logged in as: {} {}", user.username, admin_state);
-            } else {
-                println!("Not logged in");
-            }
+                if let Some(user) = state.user() {
+                    let admin_state = if user.is_admin {"(admin)"} else {""};
+                    println!("Logged in as: {} {}", user.username, admin_state);
+                } else {
+                    println!("Not logged in");
+                }
+                false
+            },
+        InteractiveCommand::Insert {table, data} => {
+                guarantee_login!(state);
+
+                let mut db = Table::load( &state.user().unwrap().username, &table ).unwrap();
+            
+                // split on comma, remove redundant whitespace
+                let values: Vec<&str> = data
+                    .split(',')
+                    .map(|item| 
+                        item.trim()
+                    ).collect();
+            
+                let field_values: Vec<FieldValue> = values.iter().map(|d| FieldValue::parse(d) ).collect();
+            
+
+                db.insert_row(field_values);
+                println!("Inserted row.");
+                false
+            },
+        InteractiveCommand::Make { name, columns: _ } => {
+            guarantee_login!(state);
+
+            // TODO! parse a list of column datapoints from a string !!
+
+            let _ = Table::init(state.user().unwrap().username.clone(), name, vec![] );
+
             false
         },
-        InteractiveCommand::Logout => {
-            if state.is_logged_in() {
-                state.logout();
-                println!("Logged out successfully");
-            } else {
-                println!("Not logged in");
-            }
-            false
-        },
-        InteractiveCommand::Exit => { println!("Exiting..."); true },
+        InteractiveCommand::Login => {
+                print!("enter username: ");
+                let _ = io::stdout().flush();
+                let mut username = String::new();
+                io::stdin().read_line(&mut username).unwrap();
+                let username = username.trim();
+
+                match state.login(username.to_string()) {
+                    Ok(()) => { println!("logged in, welcome, {username}!"); },
+                    Err(e) => { println!("error logging in!: {e}"); },
+                }
+                false
+        }
+        InteractiveCommand::Logout => { state.logout(); false },
+        InteractiveCommand::Quit => { println!("Exiting..."); true },
     }
+
+    // TODO: INSERTIONS FUCKED! -- errors after writing once ?
 }
 
 

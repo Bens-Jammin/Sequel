@@ -295,19 +295,24 @@ impl Page {
     /// 
     /// ## NOTE
     /// the path must be the TABLE path: .../sequel/users/<username>/<tablename>
-    pub fn read_page(page_id: u8, table_name: &str, path: &str) -> Option<Page> {
+    pub fn read_page(page_id: u8, _table_name: &str, path: &str) -> Option<Page> {
+        
+        let file_path = format!("{}/{}.bin", path, page_id);
+
         // 0 isn't a valid index for this. earliest page is stored as an unisigned integer in the syscat
         if page_id == 0 { return None }
-        
-        let file_path = path_to_page( path, page_id );
         let file = OpenOptions::new()
             .read(true)
             .open( 
                 Path::new(&file_path) 
             );
 
-        if file.is_err() { return None } // todo: implement custom errors
-        
+        match &file {
+            Ok(_) => {},
+            Err(_) => return None
+        }
+            
+
         let mut page_buffer: Vec<u8> = Vec::new();
         file.unwrap().read_to_end(&mut page_buffer).ok()?;
         
@@ -324,7 +329,6 @@ impl Page {
                 return Some( Page { data: page_data } ); 
             }
         }
-
         None
     }
 

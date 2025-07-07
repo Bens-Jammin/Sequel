@@ -65,6 +65,7 @@ fn table_path(username: &str, name: &str) -> String {
 }
 
 impl Table {
+///
 pub fn init(username: String, table_name: String, columns: Vec<(String, (ColumnType, bool))>) -> Table {
 
     // if user dir doesn't exit, create it
@@ -77,7 +78,6 @@ pub fn init(username: String, table_name: String, columns: Vec<(String, (ColumnT
     }
 
     let path_to_table_directory = table_path(&username, &table_name);   
-    println!("created '{}'", &path_to_table_directory); 
     // if dir exists, delete it
     match fs::remove_dir_all( &path_to_table_directory ) {
         Ok(_) => (),
@@ -146,7 +146,8 @@ pub fn insert_row(&mut self, row: Vec<FieldValue>) -> &mut Self {
     }
     
     let free_page_id = self.syscat.free_pages[0];
-    let mut page = Page::read_page(free_page_id, &self.name, &self.page_dir()).unwrap();
+    
+    let mut page: Page = Page::read_page(free_page_id, &self.name, &self.page_dir()).unwrap();
     page.write_to_disk(data, &self.name, &self.tablepath());
     if page.is_full() {
         // remove page id from syscat
@@ -209,16 +210,23 @@ impl Table {
     pub fn load(username: &str, table: &str) -> Option<Table> {
         
         let dir = table_path(username, table);
+        println!("dir: {:?}", dir);
         let dir_existence = std::fs::exists(&dir);
-
+        
+        println!(" [load table] dir exists");
         // make sure the directory exists if `fs::exists` returns either an error or `false`
-        if dir_existence.is_err() || !(dir_existence.unwrap()) { return None }
+        match dir_existence {
+            Ok(_) => (), // pass
+            Err(e) => {eprintln!("ERROR LOADING TABLE: {}", e); return None; }
+        }
+        
+        println!(" [load table] dir is not error prone");
 
         let syscat = read_syscat(&dir).unwrap();
-
+println!(" [load table] syscat is good. loading...");
         Some(Table {
             user: syscat.username.to_string(),
-            name: username.to_string(),
+            name: table.to_string(),
             syscat
         })
         
@@ -290,11 +298,11 @@ impl BlockLoader {
         if number_of_pages_in_table <= self.next_page_id_to_get() as u16 { 
             self.page_ctr = 0;
             self.record_ctr = 0;
-            return self.load_blocks_from_start(table_name, dir)
+            return self.load_blocks_from_start(table_name, &pages_directory(dir))
         }
 
 
-        let mut iter = PageReader::init(&table_name, dir);
+        let mut iter = PageReader::init(&table_name, &pages_directory(dir));
 
         let _ = match iter.next() {
             Some(p) => p,
@@ -319,7 +327,6 @@ impl BlockLoader {
             self.reset_record_counter();
             self.inc_next_page_id();
         }
-
 
         records
     }
@@ -617,7 +624,6 @@ impl<'a> Iterator for TableIterator<'a> {
     type Item = Record;
  
     fn next(&mut self) -> Option<Self::Item> {
-        
         // load fresh data if there's nothing yet or you've exhausted the current batch
         if self.buf_index == 0 || self.buf_index >= NUMBER_OF_RECORDS_IN_BLOCK { 
             self.buf = self.loader.load_next_block( &self.tablename, &self.path_to_table );

@@ -59,7 +59,7 @@ impl Table {
         let syscat = &self.syscat;
         let mut text_table = comfy_table::Table::new();
         let mut header_row: Vec<comfy_table::Cell> = Vec::new();
-        
+
         for col in &syscat.columns {
             let cell = comfy_table::Cell::new(format!("{}", &col.name ))
                 .set_alignment(comfy_table::CellAlignment::Center);
@@ -69,9 +69,7 @@ impl Table {
 
         let iterator_name = String::from(&self.name);
         let table_iterator = TableIterator::init( &iterator_name, &self.user );
-        
         for (idx, record) in table_iterator.enumerate() {
-            
             // window filter
             if idx < minimum || idx > maximum { continue; }  
 
@@ -81,7 +79,7 @@ impl Table {
                 .map(|v| return v.to_string())
                 .collect::<Vec<String>>();
             text_table.add_row(formatted_row);
-        }     
+        }
         text_table.load_preset(ASCII_TABLE_FORMAT);
 
         text_table.to_string()
